@@ -1,0 +1,103 @@
+{
+  "theme": "dark",
+  "archetype": "2 (Performance Pro / Elite Command Center)",
+  "rationale": "For a highly technical Gann trading dashboard with explosive/Godzilla scanners, the UI must feel like an elite, tactical command center. High contrast (Deep Obsidian + Pure White) ensures data readability, while Electric Green/Blaze Red provide immediate signal recognition.",
+  "colors": {
+    "background": {
+      "app": "#0A0A0A",
+      "panel": "#141414",
+      "panel_hover": "#1C1C1C",
+      "input": "#000000"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "muted": "#52525B",
+      "inverse": "#000000"
+    },
+    "border": {
+      "default": "rgba(255,255,255,0.1)",
+      "focus": "#FFFFFF",
+      "highlight": "rgba(255,255,255,0.2)"
+    },
+    "signals": {
+      "buy": "#00E676",
+      "sell": "#FF3B30",
+      "wait": "#F5A623",
+      "ghost_mode": "#A855F7",
+      "godzilla": "#FF0055",
+      "demon": "#007AFF"
+    },
+    "chart": {
+      "bull_candle": "#00E676",
+      "bear_candle": "#FF3B30",
+      "gann_fan_1x1": "#3B82F6",
+      "gann_fan_secondary": "rgba(255,255,255,0.3)"
+    }
+  },
+  "typography": {
+    "families": {
+      "heading": "'Chivo', sans-serif",
+      "body": "'IBM Plex Sans', sans-serif",
+      "mono": "'JetBrains Mono', monospace"
+    },
+    "scales": {
+      "h1": "text-4xl md:text-5xl font-black tracking-tighter uppercase",
+      "h2": "text-2xl md:text-3xl font-bold tracking-tight",
+      "h3": "text-lg md:text-xl font-bold uppercase tracking-wider",
+      "body": "text-sm md:text-base leading-relaxed",
+      "data_large": "text-2xl font-mono tracking-tight",
+      "data_medium": "text-base font-mono",
+      "data_small": "text-xs font-mono tracking-wider",
+      "badge": "text-[10px] font-bold uppercase tracking-[0.2em]"
+    }
+  },
+  "layout": {
+    "strategy": "The 'Control Room' Grid",
+    "structure": {
+      "container": "min-h-screen bg-[#0A0A0A] text-white overflow-hidden flex flex-col",
+      "header": "h-16 border-b border-white/10 flex items-center justify-between px-6 bg-[#0A0A0A]/90 backdrop-blur-md z-50",
+      "main_grid": "flex-1 grid grid-cols-1 lg:grid-cols-12 gap-px bg-white/10",
+      "left_sidebar": "lg:col-span-3 bg-[#0A0A0A] flex flex-col",
+      "center_chart": "lg:col-span-6 bg-[#0A0A0A] flex flex-col relative",
+      "right_sidebar": "lg:col-span-3 bg-[#0A0A0A] flex flex-col"
+    },
+    "spacing": {
+      "panel_padding": "p-4 md:p-6",
+      "dense_row": "py-2 px-3",
+      "gap": "gap-4"
+    }
+  },
+  "surface_strategies": {
+    "panels": "Use 'Grid Borders' look. Panels shouldn't float like cards; they should fill the grid with 1px solid borders separating them. No border-radius for outer panels to maintain the terminal look. Inner widgets can have max rounded-sm (2px).",
+    "buttons": "Flat, sharp edges (rounded-none). High contrast hover states. Primary buttons: bg-white text-black hover:bg-gray-200. Signal buttons: bg-signal text-black.",
+    "inputs": "bg-black border-white/20 focus:border-white focus:ring-0 rounded-none font-mono text-sm"
+  },
+  "feature_guidelines": {
+    "search": "Command Palette style, fixed at top of center column or header. Use Cmd+K shortcut. Large mono font for ticker symbols.",
+    "candlestick_gann_chart": "Occupies center_chart. Dark background, no gridlines or very faint 5% opacity. Gann Fan lines must originate from user-selected pivot (or lowest low) radiating upwards. Use distinct color for 1x1 (45-degree) angle.",
+    "square_of_9": "A dynamic CSS Grid. Center cell (1) highlighted. Cardinal cross (horizontal/vertical) and Ordinal cross (diagonals) must have distinct background tints (e.g., bg-white/5). Cell numbers in mono font.",
+    "signal_scanners": {
+      "falling_knife": "Use red/orange highlights. High volume/sharp drop indicators.",
+      "godzilla": "Use aggressive pink/red (#FF0055) glowing text/badges for extreme volume breakouts.",
+      "demon_confluence": "Show as a progress/radar or stacked horizontal bar chart with 0-100 score.",
+      "ghost_mode": "Auto-scanner toggle. When ON, pulse a neon purple (#A855F7) indicator in the header."
+    },
+    "signal_badges": "Solid background, black text. Extremely crisp. e.g. `<span class='bg-[#00E676] text-black px-2 py-1 text-[10px] font-bold uppercase tracking-widest'>BUY</span>`"
+  },
+  "animations": {
+    "data_tick": "When price or signal updates, flash background color (green/red) briefly and fade to transparent over 500ms.",
+    "scanner_sweep": "For Ghost Mode, a slow translating linear gradient line moving top-to-bottom across the scanner list to indicate 'scanning'.",
+    "hover": "Instant background color change, no slow CSS transitions. Makes UI feel faster."
+  },
+  "instructions_to_main_agent": [
+    "INSTALL FONTS: Ensure you import 'Chivo', 'IBM Plex Sans', and 'JetBrains Mono' via Google Fonts.",
+    "INSTALL ICONS: Use Phosphor Icons (`@phosphor-icons/react`) for sharp, technical iconography suitable for trading terminals.",
+    "USE RECHARTS/CUSTOM SVG: For the candlestick chart, you may need to build a custom SVG-based Gann Fan overlay on top of Recharts or a lightweight canvas library.",
+    "SQUARE OF 9 ALGORITHM: Implement the mathematical spiral algorithm in JS to populate a responsive CSS grid.",
+    "STRICT GRID BORDERS: Do not use floating cards with shadows. Use `border-r border-b border-white/10` to divide sections, creating a flush 'Bloomberg Terminal' aesthetic.",
+    "NO INTER FONT: Do not use Inter. Strictly use Chivo for headers, IBM Plex for body, and JetBrains Mono for all numbers/tickers.",
+    "TEST IDS: Add `data-testid` to all interactive elements (search, timeframe selectors, scanner rows, badges)."
+  ],
+  "image_urls": []
+}

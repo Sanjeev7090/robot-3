@@ -1,0 +1,415 @@
+@import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;700;900&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-app: #0A0A0A;
+  --bg-panel: #141414;
+  --bg-panel-hover: #1C1C1C;
+  --bg-input: #000000;
+  --text-primary: #FFFFFF;
+  --text-secondary: #A1A1AA;
+  --text-muted: #52525B;
+  --border-default: rgba(255,255,255,0.1);
+  --border-focus: #FFFFFF;
+  --signal-buy: #00E676;
+  --signal-sell: #FF3B30;
+  --signal-wait: #F5A623;
+  --ghost-mode: #A855F7;
+  --godzilla: #FF0055;
+  --demon: #007AFF;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'IBM Plex Sans', sans-serif;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Chivo', sans-serif;
+}
+
+code, .mono, .font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+input, select, textarea {
+  font-family: 'IBM Plex Sans', sans-serif;
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #0A0A0A;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.25);
+}
+
+/* Hide scrollbar for mobile horizontal scroll containers */
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Safe area padding for notch phones */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* Touch-friendly tap targets */
+@media (max-width: 1023px) {
+  button { min-height: 36px; }
+  input  { min-height: 40px; }
+}
+
+@keyframes pulse-buy {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0,230,118,0.4); }
+  50% { box-shadow: 0 0 12px 4px rgba(0,230,118,0.15); }
+}
+@keyframes pulse-sell {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,48,0.4); }
+  50% { box-shadow: 0 0 12px 4px rgba(255,59,48,0.15); }
+}
+@keyframes scan-sweep {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(100px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in-right {
+  animation: slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@layer base {
+  [data-debug-wrapper="true"] {
+    display: contents !important;
+  }
+  [data-debug-wrapper="true"] > * {
+    margin-left: inherit;
+    margin-right: inherit;
+    margin-top: inherit;
+    margin-bottom: inherit;
+    padding-left: inherit;
+    padding-right: inherit;
+    padding-top: inherit;
+    padding-bottom: inherit;
+    column-gap: inherit;
+    row-gap: inherit;
+    gap: inherit;
+    border-left-width: inherit;
+    border-right-width: inherit;
+    border-top-width: inherit;
+    border-bottom-width: inherit;
+    border-left-style: inherit;
+    border-right-style: inherit;
+    border-top-style: inherit;
+    border-bottom-style: inherit;
+    border-left-color: inherit;
+    border-right-color: inherit;
+    border-top-color: inherit;
+    border-bottom-color: inherit;
+  }
+}
+
+
+/* ============================================================
+   HYBRID MODE (QSC Engine) — Swiss/Brutalist styles
+   ============================================================ */
+@import url('https://api.fontshare.com/v2/css?f[]=clash-display@300,400,500,600,700&display=swap');
+
+.hybrid-mode {
+  --bg-base: #0A0A0A;
+  --bg-surface: #121212;
+  --bg-hover: #1A1A1A;
+  --profit: #3366FF;
+  --loss:   #FF3333;
+  --warn:   #FFCC00;
+  font-family: 'JetBrains Mono', monospace;
+  background: #0A0A0A;
+}
+.hybrid-mode .font-display { font-family: 'Clash Display', sans-serif; }
+
+/* Grid texture */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.028) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* QSC Cards */
+.qsc-card {
+  background: #121212;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.qsc-card:hover { background: #1A1A1A; }
+
+/* Heatmap cells */
+.heat-cell {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-family: 'JetBrains Mono', monospace;
+  border: 1px solid rgba(0,0,0,0.4);
+  color: #fff;
+  cursor: pointer;
+  transition: transform 80ms ease-out;
+}
+.heat-cell:hover { transform: scale(1.05); outline: 1px solid #fff; }
+
+/* Flat buttons */
+.btn-flat {
+  border: 1px solid rgba(255,255,255,0.4);
+  background: transparent;
+  color: #fff;
+  padding: 8px 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 120ms ease-out;
+}
+.btn-flat:hover:not(:disabled) { background: #fff; color: #000; }
+.btn-flat:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-long  { border-color: #3366FF; color: #3366FF; }
+.btn-long:hover  { background: #3366FF; color: #000; }
+.btn-short { border-color: #FF3333; color: #FF3333; }
+.btn-short:hover { background: #FF3333; color: #000; }
+
+/* Input line */
+.input-line {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(255,255,255,0.25);
+  border-radius: 0;
+  color: #fff;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 8px 4px;
+  outline: none;
+  width: 100%;
+}
+.input-line:focus { border-bottom-color: #fff; }
+
+/* Price flash */
+@keyframes flash-up   { 0% { background-color: rgba(51,102,255,0.35); } 100% { background-color: transparent; } }
+@keyframes flash-down { 0% { background-color: rgba(255,51,51,0.35);  } 100% { background-color: transparent; } }
+.flash-up   { animation: flash-up   600ms ease-out; }
+.flash-down { animation: flash-down 600ms ease-out; }
+
+/* Ticker marquee */
+@keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+.marquee-track {
+  display: inline-flex;
+  animation: marquee 60s linear infinite;
+  white-space: nowrap;
+}
+
+/* Pulse ring for live dot */
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(51,102,255,0.6); }
+  70%  { box-shadow: 0 0 0 8px rgba(51,102,255,0); }
+  100% { box-shadow: 0 0 0 0 rgba(51,102,255,0); }
+}
+.pulse-dot { animation: pulse-ring 1.6s infinite; }
+
+
+/* ============================
+   QSC Cartoon Character Animations
+   ============================ */
+
+/* BUY: Happy bounce dance */
+@keyframes qsc-bounce {
+  0%   { transform: translateY(0px) rotate(-3deg); }
+  40%  { transform: translateY(-18px) rotate(3deg) scale(1.08); }
+  70%  { transform: translateY(-10px) rotate(-2deg) scale(1.04); }
+  100% { transform: translateY(0px) rotate(0deg); }
+}
+@keyframes qsc-arm-wave {
+  0%   { transform: rotate(-30deg); }
+  50%  { transform: rotate(30deg); }
+  100% { transform: rotate(-30deg); }
+}
+@keyframes qsc-star-float {
+  0%   { transform: translateY(0) scale(1); opacity: 1; }
+  100% { transform: translateY(-20px) scale(0.5); opacity: 0; }
+}
+@keyframes qsc-confetti {
+  0%   { transform: translateY(-4px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(16px) rotate(180deg); opacity: 0; }
+}
+
+/* SELL: Crying shake */
+@keyframes qsc-sad-sway {
+  0%   { transform: rotate(-2deg) translateY(0); }
+  25%  { transform: rotate(2deg) translateY(2px); }
+  50%  { transform: rotate(-2deg) translateY(0); }
+  75%  { transform: rotate(2deg) translateY(2px); }
+  100% { transform: rotate(-2deg) translateY(0); }
+}
+@keyframes qsc-tear-fall {
+  0%   { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(22px); opacity: 0; }
+}
+
+/* NEUTRAL: Angry stare */
+@keyframes qsc-angry-pulse {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+@keyframes qsc-steam {
+  0%   { transform: translateY(0) scaleX(1); opacity: 0.7; }
+  50%  { transform: translateY(-8px) scaleX(1.3); opacity: 0.4; }
+  100% { transform: translateY(-14px) scaleX(0.8); opacity: 0; }
+}
+@keyframes qsc-eye-twitch {
+  0%,90%,100% { transform: scaleY(1); }
+  95%         { transform: scaleY(0.3); }
+}
+@keyframes qsc-screen-glow {
+  0%,100% { opacity: 0.3; }
+  50%     { opacity: 0.8; }
+}
+
+
+/* ================================================================
+   LIGHT THEME — CSS Variable + Tailwind Class Overrides
+   Covers ALL sub-components without touching each file individually
+   ================================================================ */
+
+/* Override CSS variables when NOT in dark mode */
+html:not(.dark) {
+  --bg-app: #F0F4F8;
+  --bg-panel: #FFFFFF;
+  --bg-panel-hover: #F8FAFC;
+  --bg-input: #EFF2F7;
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+  --border-default: rgba(15,23,42,0.08);
+  --border-focus: #0F172A;
+  color-scheme: light;
+}
+
+html:not(.dark) body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+/* Scrollbars */
+html:not(.dark) ::-webkit-scrollbar-track { background: #EEF2F7; }
+html:not(.dark) ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.18); }
+html:not(.dark) ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.28); }
+
+/* ---- BACKGROUND OVERRIDES ---- */
+html:not(.dark) .bg-\[\#0A0A0A\] { background-color: #F0F4F8 !important; }
+html:not(.dark) .bg-\[\#0a0a0a\] { background-color: #F0F4F8 !important; }
+html:not(.dark) .bg-\[\#141414\] { background-color: #FFFFFF !important; }
+html:not(.dark) .bg-\[\#0B0B0B\] { background-color: #E8EDF3 !important; }
+html:not(.dark) .bg-\[\#0b0b0b\] { background-color: #E8EDF3 !important; }
+html:not(.dark) .bg-\[\#0D0D0D\] { background-color: #FFFFFF !important; }
+html:not(.dark) .bg-\[\#0d0d0d\] { background-color: #FFFFFF !important; }
+html:not(.dark) .bg-\[\#111111\] { background-color: #FFFFFF !important; }
+html:not(.dark) .bg-\[\#111\]    { background-color: #FFFFFF !important; }
+html:not(.dark) .bg-\[\#1C1C1C\] { background-color: #F4F7FA !important; }
+html:not(.dark) .bg-\[\#1c1c1c\] { background-color: #F4F7FA !important; }
+html:not(.dark) .bg-\[\#1A1A1A\] { background-color: #F4F7FA !important; }
+html:not(.dark) .bg-\[\#121212\] { background-color: #FFFFFF !important; }
+
+/* Semi-transparent backgrounds */
+html:not(.dark) .bg-white\/5      { background-color: rgba(0,0,0,0.04) !important; }
+html:not(.dark) .bg-white\/10     { background-color: rgba(0,0,0,0.06) !important; }
+html:not(.dark) .bg-white\/\[0\.02\] { background-color: rgba(0,0,0,0.02) !important; }
+html:not(.dark) .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,0.03) !important; }
+html:not(.dark) .bg-white\/\[0\.04\] { background-color: rgba(0,0,0,0.04) !important; }
+html:not(.dark) .bg-white\/\[0\.08\] { background-color: rgba(0,0,0,0.05) !important; }
+html:not(.dark) .bg-black\/50     { background-color: rgba(255,255,255,0.7) !important; }
+
+/* Hover & active */
+html:not(.dark) .hover\:bg-white\/5:hover      { background-color: rgba(0,0,0,0.04) !important; }
+html:not(.dark) .hover\:bg-white\/\[0\.08\]:hover { background-color: rgba(0,0,0,0.06) !important; }
+html:not(.dark) .hover\:bg-white\/10:hover     { background-color: rgba(0,0,0,0.06) !important; }
+html:not(.dark) .active\:bg-white\/5:active    { background-color: rgba(0,0,0,0.04) !important; }
+
+/* Loading overlays */
+html:not(.dark) .bg-\[\#0A0A0A\]\/80 { background-color: rgba(240,244,248,0.85) !important; }
+html:not(.dark) .bg-\[\#0A0A0A\]\/90 { background-color: rgba(248,250,252,0.92) !important; }
+
+/* ---- TEXT OVERRIDES ---- */
+html:not(.dark) .text-white        { color: #0F172A !important; }
+html:not(.dark) .text-white\/90    { color: rgba(15,23,42,0.9) !important; }
+html:not(.dark) .text-zinc-500     { color: #64748B !important; }
+html:not(.dark) .text-zinc-400     { color: #94A3B8 !important; }
+html:not(.dark) .text-zinc-600     { color: #94A3B8 !important; }
+html:not(.dark) .text-zinc-700     { color: #CBD5E1 !important; }
+html:not(.dark) .text-zinc-800     { color: #E2E8F0 !important; }
+html:not(.dark) .placeholder\:text-zinc-600::placeholder { color: #94A3B8 !important; }
+
+/* Keep green/red signal colors unchanged */
+html:not(.dark) .text-\[\#00E676\] { color: #059669 !important; }
+html:not(.dark) .text-\[\#FF3B30\] { color: #DC2626 !important; }
+html:not(.dark) .text-\[\#FF3D71\] { color: #DC2626 !important; }
+
+/* ---- BORDER OVERRIDES ---- */
+html:not(.dark) .border-white\/10 { border-color: rgba(0,0,0,0.08) !important; }
+html:not(.dark) .border-white\/5  { border-color: rgba(0,0,0,0.04) !important; }
+html:not(.dark) .border-white\/20 { border-color: rgba(0,0,0,0.12) !important; }
+html:not(.dark) .border-white\/40 { border-color: rgba(0,0,0,0.25) !important; }
+html:not(.dark) .border-white\/\[0\.04\] { border-color: rgba(0,0,0,0.04) !important; }
+
+/* Strategy list dividers */
+html:not(.dark) .divide-white\/10 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(0,0,0,0.08) !important;
+}
+
+/* Input fields */
+html:not(.dark) .bg-black {
+  background-color: #F8FAFC !important;
+}
+html:not(.dark) .bg-black\/60,
+html:not(.dark) .bg-black\/80,
+html:not(.dark) .bg-black\/90 {
+  background-color: rgba(248,250,252,0.95) !important;
+}
+
+/* ---- INPUT FOCUS ---- */
+html:not(.dark) .focus\:border-white\/40:focus { border-color: rgba(0,0,0,0.3) !important; }
+
+/* ---- HOVER TEXT ---- */
+html:not(.dark) .hover\:text-white:hover { color: #0F172A !important; }
+
+/* ---- TRANSITION for theme switch ---- */
+html.dark,
+html:not(.dark) {
+  transition: background-color 0.2s ease, color 0.2s ease;
+}

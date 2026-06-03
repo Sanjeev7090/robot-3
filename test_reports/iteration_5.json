@@ -1,0 +1,48 @@
+{
+  "summary": "MiroFish integration into Auto Scanner verified end-to-end. Backend: 6/6 pytest cases PASSED in test_auto_scan_mirofish.py (signals shape, MiroFish present, other strategies alongside, cache faster on 2nd call, invalid ticker graceful). Frontend: News popup auto-appears on stock select; SCANNER tab shows '10 strategies' info text and MiroFish chip highlighted in teal (#00BCD4); after START, scanner result includes MiroFish (BULLISH) BUY signal alongside SMC (BULLISH) BUY and AMDS (BEARISH) SELL with Entry/SL/T1/T2/T3 and confidence rendered. Caching observed: first /api/auto-scan/RELIANCE.NS ~2.18s vs cached ~0.09s.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "GET /api/auto-scan/RELIANCE.NS - 200, returns signals list with MiroFish (BULLISH) BUY conf=70 alongside SMC (BULLISH) BUY conf=75 and AMDS (BEARISH) SELL conf=43",
+    "Auto-scan signal schema: every signal has strategy, direction (BUY/SELL), entry, stoploss, targets[], confidence",
+    "Non-MiroFish strategies present in same response (SMC + AMDS)",
+    "MiroFish caching: 1st call 2.18s -> 2nd call 0.09s (5-min cache hit)",
+    "GET /api/auto-scan/INVALIDXYZ123.NS - 200 with has_signal:false (graceful)",
+    "Frontend: Search 'RELIANCE' -> click RELIANCE.NS result -> News popup auto-appears",
+    "Frontend SCANNER tab text contains '10 strategies'",
+    "Frontend MiroFish strategy chip class includes bg-[#00BCD4]/15 text-[#00BCD4] (teal highlight)",
+    "Frontend START auto-scanner -> rendered cards include MiroFish (BULLISH) BUY Entry 1361.2 SL 1320.36 T1 1402.04 T2 1429.26 T3 1470.1 conf 70%",
+    "Frontend SCANNER concurrently renders SMC (BULLISH) BUY and AMDS (BEARISH) SELL cards"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_auto_scan_mirofish.py",
+    "/app/test_reports/pytest/test_auto_scan_mirofish.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py now ~5492 lines - exceeds 700-line cap; recommend extracting scanner strategies (run_mini_*, run_full_smc_analysis, run_full_amds_analysis, _run_mirofish_for_scanner) into services/scanner_strategies.py module.",
+    "_run_mirofish_for_scanner uses asyncio.wait_for(timeout=25) which is good. However the broad 'except (asyncio.TimeoutError, Exception)' silently swallows all errors - log includes warning but consider differentiating cache miss vs timeout vs LLM JSON parse error.",
+    "cache_storage is in-process dict; cache_storage[mf_cache_key] in MiroFish scan uses dict-of-dicts format ({'data': ..., 'ts': ...}) but ghost_scan uses tuple format ((data, time)) at line 3889 - inconsistent cache schema in the same file can cause confusion / future bugs.",
+    "Auto-scan ticker_obj = yf.Ticker(ticker) is a blocking call inside an async endpoint; under load this will block the event loop. Wrap in asyncio.to_thread() or use httpx with yfinance alternative.",
+    "MiroFish LLM JSON parse (json.loads(cleaned)) has no fallback - if GPT returns malformed JSON, ValueError propagates and is caught by the broad except, silently dropping the signal. Add try/except with logged warning.",
+    "Cache TTL stored as datetime.now(timezone.utc) for MiroFish but datetime.now() (naive) elsewhere in ghost_scan - mixing aware/naive datetimes could raise TypeError if logic is unified later."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auto_scan_mirofish.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (6/6)",
+    "frontend": "100% (all critical flows: news popup, scanner tab text, MiroFish teal chip, auto-scan signals with MiroFish + SMC + AMDS)"
+  },
+  "seed_data_creation": "None - tests use live yfinance data for RELIANCE.NS",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "MiroFish auto-scan integration is live and verified. Cache key 'mirofish_scan_{ticker}' format: {'data': {'signal_type','signal'}, 'ts': datetime}. Frontend selectors: AutoScanner shows strategy chips at .text-[8px] spans; MiroFish chip has class bg-[#00BCD4]/15. STRATEGIES tab in desktop is the 3rd tab in top-right header (Scanner/Strategies/Ghost/Backtest); on smaller viewports there's a separate mobile-panel-right button so use exact selector. Standalone MiroFish RUN SWARM already verified in iteration_4."
+}

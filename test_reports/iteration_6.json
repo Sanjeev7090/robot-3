@@ -1,0 +1,88 @@
+{
+  "summary": "Paper Trading feature fully tested (backend + frontend). All 21 backend pytest cases PASSED. All frontend flows verified: PAPER tab, portfolio stats, Auto Execute toggle, Positions/History/Order tabs, Trade button on scanner signals with pre-fill, close position modal, risk/reward calculator. One pre-existing chart error identified (unrelated to paper trading).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "ChartPanel",
+        "issue": "Console error: 'TypeError: chart.addPriceLine is not a function' fires repeatedly when stock is loaded. Pre-existing bug in lightweight-charts integration, not related to paper trading.",
+        "selector": "ChartPanel component (bundle.js:35844)",
+        "priority": "LOW (pre-existing, non-blocking)"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "PAPER tab - Available Balance",
+        "issues": [
+          "Initial balance displays as '₹500.6K' or '₹472.0K' based on live state - shows ₹500.0K only after a fresh reset. This is correct behavior but user expectation may need ₹500.0K on very first visit (already handled via _ensure_paper_portfolio on backend)."
+        ]
+      }
+    ]
+  },
+  "passed_tests": [
+    "Backend: POST /api/paper-trade/reset returns 200 with initial_balance=500000",
+    "Backend: GET /api/paper-trade/portfolio returns 200 with all required fields",
+    "Backend: GET /api/paper-trade/portfolio initial_balance = 500000",
+    "Backend: GET /api/paper-trade/portfolio current_balance = 500000 after reset",
+    "Backend: POST /api/paper-trade/order (BUY) returns 201 with trade_id, symbol, direction=BUY, status=OPEN",
+    "Backend: POST /api/paper-trade/order deducts invested_amount from balance correctly",
+    "Backend: POST /api/paper-trade/order (SELL) returns 201",
+    "Backend: POST /api/paper-trade/order with excessive quantity returns 400 (insufficient balance)",
+    "Backend: GET /api/paper-trade/positions returns 200 with 'positions' list",
+    "Backend: GET /api/paper-trade/positions shows placed orders with correct fields",
+    "Backend: GET /api/paper-trade/history returns 200 with 'trades' list",
+    "Backend: PUT /api/paper-trade/close/{trade_id} returns 200 with status/pnl/exit_price",
+    "Backend: PUT /api/paper-trade/close/{trade_id} updates portfolio balance correctly",
+    "Backend: PUT /api/paper-trade/close/{trade_id} moves trade to history",
+    "Backend: PUT /api/paper-trade/close/{nonexistent} returns 404",
+    "Backend: total_trades count increases after close",
+    "Backend: winning_trades count increases on profitable close",
+    "Backend: TARGET_HIT status when exit >= target for BUY",
+    "Backend: SL_HIT status when exit <= stop_loss for BUY with negative PnL",
+    "Frontend: PAPER tab visible in right sidebar (alongside SCANNER, STRATEGIES, GHOST, MONTE CARLO)",
+    "Frontend: Paper Trading panel loads with all 5 stat cards (available-balance, total-pnl, win-rate, open-count, total-trades)",
+    "Frontend: Available Balance shows ₹500.0K/₹500K initial display after reset",
+    "Frontend: Auto Execute toggle found and turns purple when clicked ON",
+    "Frontend: Positions tab shows empty state with helpful text ('Koi open position nahi')",
+    "Frontend: History tab shows closed trades with status badges (SL_HIT/TARGET_HIT/CLOSED)",
+    "Frontend: + New Order tab shows complete form (Symbol, Direction BUY/SELL, Quantity, Entry, SL red, Target green)",
+    "Frontend: Risk/Reward calculator appears when entry + SL + target filled (shows Risk, R:R ratio 1:2.0, Reward)",
+    "Frontend: Place Order submits successfully → auto-navigates to Positions tab → position shows in list",
+    "Frontend: Scanner signals show 3 Trade buttons (onPaperTrade prop working correctly in AutoScanner)",
+    "Frontend: Clicking Trade button on scanner signal → switches to PAPER tab → pre-fills Symbol=RELIANCE.NS, Entry=1366.5, SL=1325.5, Target=1421.16",
+    "Frontend: Close Position modal opens with Symbol, Direction, Qty, Exit Price pre-filled (live market price)",
+    "Frontend: Confirm Close button closes modal, shows 'Position closed!' toast, moves trade to History"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_paper_trading.py",
+    "/app/test_reports/pytest/test_paper_trading.xml"
+  ],
+  "action_items": [
+    "LOW PRIORITY: Fix pre-existing chart.addPriceLine error in ChartPanel (TypeError: chart.addPriceLine is not a function) - occurs when stock is loaded, lightweight-charts API compatibility issue"
+  ],
+  "critical_code_review_comments": [
+    "get_paper_portfolio() and get_paper_positions() both call yf.Ticker().history() synchronously inside async endpoints for each open position - this blocks the event loop under load. Wrap in asyncio.to_thread() for production use.",
+    "Portfolio uses a single 'default' portfolio_id - no multi-user isolation. This is acceptable for MVP but note it's a single shared portfolio for all users.",
+    "server.py is now ~9332 lines - far exceeds 700-line guideline. Paper trading code (lines 5753-5958) should be extracted to services/paper_trading.py module.",
+    "_ensure_paper_portfolio() does a find_one + insert_one in two separate async DB calls without a transaction - could cause duplicate portfolio docs if two requests race. Add upsert pattern instead.",
+    "PaperTradingPanel.jsx: The pendingPaperTrade useEffect dependency array omits selectedStock but references it (line 239) - should add selectedStock to deps or use useCallback properly to avoid stale closure."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_paper_trading.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21)",
+    "frontend": "100% (all critical flows verified)"
+  },
+  "seed_data_creation": "Test trades placed during backend pytest run (reset + place/close cycle). Portfolio reset at test start for clean state.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Paper Trading MVP fully verified in iteration_6. Backend test file: /app/backend/tests/test_paper_trading.py (21 tests, all pass). Key selectors: data-testid='paper-trading-panel', 'tab-paper', 'paper-tab-positions', 'paper-tab-history', 'paper-tab-order', 'auto-execute-toggle', 'order-symbol', 'order-entry', 'order-sl', 'order-target', 'place-order-btn', 'paper-trade-btn-{idx}' (Trade buttons on scanner signals). API: all 6 paper-trade endpoints working. Pre-existing bug: chart.addPriceLine TypeError in ChartPanel (not paper trading related).",
+  "rca_of_issues": {
+    "chart_addPriceLine_error": "ChartPanel uses chart.addPriceLine() (TradingView Lightweight Charts method) but the installed version may not support this method or it has been renamed/removed. Error fires for each price level overlay. RCA: lightweight-charts API version mismatch. Fix: use series.createPriceLine() or check API documentation for the installed version."
+  }
+}
