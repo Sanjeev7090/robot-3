@@ -41,6 +41,7 @@ import Gann3DPanel from './Gann3DPanel';
 import VoiceCommandSystem from './VoiceCommandSystem';
 import OrderFlowPanel from './OrderFlowPanel';
 import KronosForecastPanel from './KronosForecastPanel';
+import AIRouterPanel from './AIRouterPanel';
 import GrowwPortfolio from './GrowwPortfolio';
 import IndicesTickerBar from './IndicesTickerBar';
 import TopOptionsSheet from './TopOptionsSheet';
@@ -416,7 +417,7 @@ const TradingDashboard = () => {
     }
   };
 
-  const fetchSignal = async (pivot) => {
+  const fetchSignal = useCallback(async (pivot) => {
     if (!selectedStock || !pivot || selectedStock.type === 'CRYPTO' || selectedStock.type === 'OPTION') return;
     try {
       const response = await axios.get(`${API}/signal/${selectedStock.ticker}`, {
@@ -424,14 +425,14 @@ const TradingDashboard = () => {
       });
       setSignal(response.data);
     } catch (error) { /* silent */ }
-  };
+  }, [selectedStock]);
 
   useEffect(() => {
     if (pivotPoint && selectedStock && selectedStock.type !== 'CRYPTO' && selectedStock.type !== 'OPTION') {
       const interval = setInterval(() => fetchSignal(pivotPoint), 60000);
       return () => clearInterval(interval);
     }
-  }, [pivotPoint, selectedStock]);
+  }, [pivotPoint, selectedStock, fetchSignal]);
 
   const isCrypto = selectedStock?.type === 'CRYPTO';
   const isOption = selectedStock?.type === 'OPTION';
@@ -442,6 +443,7 @@ const TradingDashboard = () => {
     { id: 'paper',      label: 'PAPER'       },
     { id: 'rlagent',    label: 'RL AGENT'    },
     { id: 'ensemble',   label: 'AI ENSEMBLE' },
+    { id: '9router',    label: '9ROUTER'     },
     { id: '_divider_risk', label: 'RISK', isDivider: true },
     { id: 'picker',     label: 'PICKER'      },
     { id: 'pece',       label: 'PE-CE OI'    },
@@ -760,6 +762,10 @@ const TradingDashboard = () => {
 
             {activeTab === 'ensemble' && (
               <EnsembleCockpitPanel selectedStock={selectedStock} />
+            )}
+
+            {activeTab === '9router' && (
+              <AIRouterPanel />
             )}
 
             {activeTab === 'picker' && (

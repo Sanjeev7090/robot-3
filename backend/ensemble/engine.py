@@ -91,6 +91,48 @@ def _extract_json(text: str) -> Optional[dict]:
 # Single-model async call
 # ---------------------------------------------------------------------------
 
+async def _ask_via_ai_router(
+    model: str,
+    display_name: str,
+    system_message: str,
+    user_text: str,
+    timeout: float = 45.0,
+) -> Dict:
+    """Call via the local AI Router (OpenCode Free / configured providers)."""
+    import time
+    start = time.time()
+    try:
+        from ai_router.engine import ai_complete
+        resp = await asyncio.wait_for(
+            ai_complete(
+                messages=[{"role": "user", "content": user_text}],
+                model=model,
+                system=system_message,
+                temperature=0.3,
+                max_tokens=512,
+            ),
+            timeout=timeout,
+        )
+        latency = int((time.time() - start) * 1000)
+        if resp is None:
+            return {"model": display_name, "provider": "ai_router", "ok": False,
+                    "raw": "", "parsed": None, "error": "router returned None",
+                    "latency_ms": latency}
+        return {
+            "model": display_name, "provider": "ai_router",
+            "ok": True, "raw": resp, "parsed": _extract_json(resp),
+            "error": None, "latency_ms": latency,
+        }
+    except asyncio.TimeoutError:
+        return {"model": display_name, "provider": "ai_router", "ok": False,
+                "raw": "", "parsed": None, "error": "timeout",
+                "latency_ms": int((time.time() - start) * 1000)}
+    except Exception as exc:
+        return {"model": display_name, "provider": "ai_router", "ok": False,
+                "raw": "", "parsed": None, "error": str(exc)[:300],
+                "latency_ms": int((time.time() - start) * 1000)}
+
+
 async def _ask_one_model(
     provider: str,
     model: str,
@@ -102,16 +144,18 @@ async def _ask_one_model(
     """Call one LLM. Returns dict {model, ok, raw, parsed, error, latency_ms}."""
     import time
     start = time.time()
+
+    # Prefer AI Router when no Emergent key configured
+    emergent_key = os.environ.get("EMERGENT_LLM_KEY", "").strip()
+    if not emergent_key:
+        return await _ask_via_ai_router(model, display_name, system_message, user_text, timeout)
+
     try:
         chat = LlmChat(
             api_key=_get_api_key(),
             session_id=f"ensemble-{uuid.uuid4().hex[:8]}",
             system_message=system_message,
         ).with_model(provider, model)
-
-        # Optional override for freellmapi (LlmChat respects standard OpenAI env if
-        # consumer points OPENAI_BASE_URL — but emergentintegrations is its own
-        # client; freellmapi override is intended for future direct httpx path).
 
         msg = UserMessage(text=user_text)
         resp = await asyncio.wait_for(chat.send_message(msg), timeout=timeout)
@@ -130,10 +174,9 @@ async def _ask_one_model(
                 "raw": "", "parsed": None, "error": "timeout",
                 "latency_ms": int((time.time() - start) * 1000)}
     except Exception as exc:
-        logger.warning("Ensemble model %s failed: %s", display_name, exc)
-        return {"model": display_name, "provider": provider, "ok": False,
-                "raw": "", "parsed": None, "error": str(exc)[:300],
-                "latency_ms": int((time.time() - start) * 1000)}
+        logger.warning("Ensemble model %s failed: %s — trying AI Router", display_name, exc)
+        # Fallback to AI Router
+        return await _ask_via_ai_router(model, display_name, system_message, user_text, timeout)
 
 
 # ---------------------------------------------------------------------------

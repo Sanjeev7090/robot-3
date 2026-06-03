@@ -100,6 +100,15 @@ async def llm_complete(
     # Fallback to Emergent
     emergent_key = os.environ.get("EMERGENT_LLM_KEY", "").strip()
     if not emergent_key:
+        # Try AI Router (OpenCode Free / configured providers)
+        try:
+            from ai_router.engine import ai_complete as _ai_complete
+            msgs = [{"role": "user", "content": user_text}]
+            result = await _ai_complete(messages=msgs, system=system_message, temperature=temperature)
+            if result:
+                return result
+        except Exception as _e:
+            logging.warning(f"AI Router fallback failed: {_e}")
         return None
     try:
         chat = LlmChat(
@@ -110,6 +119,15 @@ async def llm_complete(
         chat.with_model(provider, model)
         return await chat.send_message(UserMessage(text=user_text))
     except Exception as e:
+        # Last resort: AI Router
+        try:
+            from ai_router.engine import ai_complete as _ai_complete
+            msgs = [{"role": "user", "content": user_text}]
+            result = await _ai_complete(messages=msgs, system=system_message, temperature=temperature)
+            if result:
+                return result
+        except Exception:
+            pass
         logging.warning(f"Emergent LLM call failed: {e}")
         return None
 
@@ -11185,6 +11203,9 @@ app.include_router(pece_router)
 from moneycontrol.router import router as mc_router
 app.include_router(mc_router)
 
+from ai_router.router import ai_router as _ai_router
+app.include_router(_ai_router)
+
 # DataManager cache stats endpoint
 from core.data_manager import dm as _dm
 from fastapi import APIRouter as _APIRouter
@@ -11281,6 +11302,12 @@ async def _binance_ws_task():
 
 @app.on_event("startup")
 async def startup_binance_ws():
+    # Seed AI Router default providers (OpenCode Free)
+    try:
+        from ai_router.engine import seed_defaults as _ai_seed
+        asyncio.create_task(_ai_seed())
+    except Exception as _e:
+        logging.warning(f"AI Router seed failed: {_e}")
     asyncio.create_task(_binance_ws_task())
     # Also start QSC/Hybrid background feeds
     asyncio.create_task(_hybrid_coinbase_bridge())
