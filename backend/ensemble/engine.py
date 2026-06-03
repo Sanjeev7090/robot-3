@@ -109,7 +109,7 @@ async def _ask_via_ai_router(
                 model=model,
                 system=system_message,
                 temperature=0.3,
-                max_tokens=512,
+                max_tokens=1024,
             ),
             timeout=timeout,
         )
@@ -279,12 +279,17 @@ def _vote(results: List[Dict]) -> Dict:
 
 ENSEMBLE_SYSTEM_PROMPT = (
     "You are a senior NSE/BSE Indian-market quantitative trading analyst. "
-    "Given a snapshot of price action and technical context, you output a single "
-    "trading decision as STRICT JSON with keys: "
-    '`signal` (one of "BUY", "SELL", "HOLD"), '
-    "`confidence` (integer 0-100 = how strongly you believe in this signal), "
-    "and `rationale` (1-2 short sentences). "
-    "Do not include any prose outside the JSON. Do not wrap in markdown."
+    "Given a market snapshot with current price and technical context, output a STRICT JSON with EXACTLY these keys: "
+    '`signal` ("BUY", "SELL", or "HOLD"), '
+    "`confidence` (integer 0-100), "
+    "`entry_price` (float — recommended entry, near current price), "
+    "`stop_loss` (float — strict stop-loss level), "
+    "`target_1` (float — first short-term target), "
+    "`target_2` (float — second medium target), "
+    "`target_3` (float — third day/swing target), "
+    "`rationale` (1-2 short sentences). "
+    "Base entry/SL/targets on the provided ATR, support, resistance levels. "
+    "Do NOT include any prose outside the JSON. Do not wrap in markdown fences."
 )
 
 

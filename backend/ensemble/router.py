@@ -22,7 +22,6 @@ ensemble_router = APIRouter(prefix="/api/ensemble", tags=["Multi-AI Ensemble"])
 
 class SignalRequest(BaseModel):
     ticker: str
-    # Optional pre-computed context; if missing, we build it from yfinance.
     context: Optional[dict] = None
     extra_prompt: Optional[str] = None
 
@@ -37,6 +36,32 @@ class FreePrompt(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Helpers: extract SL/Target from per_model parsed JSON
+# ---------------------------------------------------------------------------
+
+def _extract_levels(parsed: Optional[dict], context: dict) -> dict:
+    """Pull entry/SL/target fields from a model's parsed JSON response."""
+    if not parsed:
+        return {}
+    cur = context.get("close", 0) or 0
+    entry  = parsed.get("entry_price") or parsed.get("entry") or cur
+    sl     = parsed.get("stop_loss") or parsed.get("sl") or None
+    t1     = parsed.get("target_1") or parsed.get("t1") or None
+    t2     = parsed.get("target_2") or parsed.get("t2") or None
+    t3     = parsed.get("target_3") or parsed.get("t3") or None
+    try:
+        return {
+            "entry_price": round(float(entry), 2),
+            "stop_loss":   round(float(sl), 2)  if sl  is not None else None,
+            "target_1":    round(float(t1), 2)  if t1  is not None else None,
+            "target_2":    round(float(t2), 2)  if t2  is not None else None,
+            "target_3":    round(float(t3), 2)  if t3  is not None else None,
+        }
+    except (TypeError, ValueError):
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -48,8 +73,7 @@ async def status():
 @ensemble_router.post("/signal")
 async def signal(req: SignalRequest):
     """
-    Generic ensemble signal for a ticker.
-    Builds a market snapshot (or uses caller-provided one) and asks all 3 models.
+    Full ensemble signal: 3 AI models + Kronos (if loaded) each give BUY/SELL/SL/Target.
     """
     context = req.context
     if not context:
@@ -61,17 +85,71 @@ async def signal(req: SignalRequest):
     prompt = {
         "ticker": req.ticker,
         "snapshot": context,
-        "task": "Output BUY/SELL/HOLD with confidence and a short rationale.",
+        "task": (
+            "Output STRICT JSON with: signal (BUY/SELL/HOLD), confidence (0-100), "
+            "entry_price, stop_loss, target_1, target_2, target_3, rationale."
+        ),
     }
     if req.extra_prompt:
         prompt["additional_instructions"] = req.extra_prompt
 
     verdict = await ensemble_engine.ask_ensemble(json.dumps(prompt, indent=2))
+
+    # Enrich per_model results with extracted price levels + flatten parsed JSON
+    votes_map = {v["model"]: v for v in verdict.get("votes", [])}
+    per_model_enriched = []
+    for r in verdict.get("per_model", []):
+        levels = _extract_levels(r.get("parsed"), context)
+        # Merge parsed fields (signal, confidence, rationale) + vote weight
+        vote_info = votes_map.get(r.get("model"), {})
+        parsed = r.get("parsed") or {}
+        enriched = {
+            **r,
+            "signal":     vote_info.get("signal") or parsed.get("signal") or "HOLD",
+            "confidence": vote_info.get("confidence") or parsed.get("confidence") or 0,
+            "rationale":  vote_info.get("rationale") or parsed.get("rationale") or "",
+            "weight":     vote_info.get("weight", 1.0),
+            **levels,
+        }
+        per_model_enriched.append(enriched)
+
+    # Add Kronos as model #4
+    kronos_result = None
+    try:
+        from kronos_router import get_kronos_signal
+        kronos_raw = await get_kronos_signal(req.ticker)
+        if kronos_raw:
+            # Normalise to match ensemble per_model format
+            sig = kronos_raw["signal"]
+            if sig == "WAIT":
+                sig = "HOLD"
+            kronos_result = {
+                "model":       "Kronos AI",
+                "provider":    "kronos",
+                "ok":          True,
+                "signal":      sig,
+                "confidence":  kronos_raw["confidence"],
+                "rationale":   kronos_raw["rationale"],
+                "weight":      1.0,
+                "entry_price": kronos_raw.get("entry_price"),
+                "stop_loss":   kronos_raw.get("stop_loss"),
+                "target_1":    kronos_raw.get("target_1"),
+                "target_2":    kronos_raw.get("target_2"),
+                "target_3":    kronos_raw.get("target_3"),
+                "risk_reward": kronos_raw.get("risk_reward"),
+            }
+            per_model_enriched.append(kronos_result)
+    except Exception as e:
+        logger.warning("Kronos signal fetch skipped: %s", e)
+
+    verdict["per_model"] = per_model_enriched
+
     return {
-        "success":  True,
-        "ticker":   req.ticker,
-        "context":  context,
-        "verdict":  verdict,
+        "success":      True,
+        "ticker":       req.ticker,
+        "context":      context,
+        "verdict":      verdict,
+        "kronos_loaded": kronos_result is not None,
     }
 
 

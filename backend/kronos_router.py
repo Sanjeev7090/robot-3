@@ -380,3 +380,56 @@ async def kronos_forecast(req: KronosForecastRequest):
         lookback_used=len(hist_bars),
         pred_len=len(forecast_bars),
     )
+
+
+# ---------------------------------------------------------------------------
+# Internal helper — called by ensemble router to get Kronos signal
+# ---------------------------------------------------------------------------
+
+async def get_kronos_signal(ticker: str, timeframe: str = "1d", pred_len: int = 10) -> Optional[dict]:
+    """
+    Returns Kronos signal dict for use in ensemble panel.
+    Returns None if model is not loaded or prediction fails.
+    """
+    if _PREDICTOR is None:
+        return None
+    try:
+        hist = _fetch_history(ticker, timeframe, 200)
+        in_df = pd.DataFrame({
+            "open":   hist["Open"].astype(float).values,
+            "high":   hist["High"].astype(float).values,
+            "low":    hist["Low"].astype(float).values,
+            "close":  hist["Close"].astype(float).values,
+            "volume": hist["Volume"].astype(float).values,
+        })
+        in_df["amount"] = in_df["volume"] * ((in_df["open"] + in_df["high"] + in_df["low"] + in_df["close"]) / 4.0)
+        x_ts = pd.Series(pd.to_datetime(hist.index)).reset_index(drop=True)
+        y_ts_idx = _build_future_timestamps(x_ts.iloc[-1], pred_len, timeframe)
+        y_ts = pd.Series(y_ts_idx)
+
+        pred_df = _PREDICTOR.predict(
+            df=in_df, x_timestamp=x_ts, y_timestamp=y_ts,
+            pred_len=pred_len, T=1.0, top_p=0.9, sample_count=1, verbose=False,
+        )
+        sig = _build_signal(hist, pred_df)
+        targets = sig.get("targets", [sig.get("day_target")] * 3)
+        while len(targets) < 3:
+            targets.append(targets[-1])
+        return {
+            "model":        "Kronos AI",
+            "provider":     "kronos",
+            "ok":           True,
+            "signal":       sig["direction"],      # BUY / SELL / WAIT→HOLD
+            "confidence":   sig["confidence"],
+            "entry_price":  round(sig["entry"], 2),
+            "stop_loss":    round(sig["stop_loss"], 2),
+            "target_1":     round(targets[0], 2),
+            "target_2":     round(targets[1], 2),
+            "target_3":     round(targets[2], 2),
+            "rationale":    sig["rationale"],
+            "risk_reward":  sig.get("risk_reward", 0),
+            "weight":       1.0,
+        }
+    except Exception as e:
+        logger.warning("get_kronos_signal failed for %s: %s", ticker, e)
+        return None

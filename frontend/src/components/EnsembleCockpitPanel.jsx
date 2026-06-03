@@ -1,105 +1,147 @@
 import React, { useState, useEffect } from 'react';
-import { Brain, Sparkle, Target, ChartLineUp, Lightning, Robot, Check, X, ArrowsClockwise } from '@phosphor-icons/react';
+import { Brain, Target, Lightning, Robot, Check, X, ArrowsClockwise, Sparkle } from '@phosphor-icons/react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/ensemble`;
 
-const SIGNAL_COLOR = {
-  BUY:     'text-emerald-400 border-emerald-500/40 bg-emerald-500/10',
-  SELL:    'text-rose-400 border-rose-500/40 bg-rose-500/10',
-  HOLD:    'text-amber-400 border-amber-500/40 bg-amber-500/10',
-  ABSTAIN: 'text-slate-400 border-slate-500/40 bg-slate-500/10',
+// ─── Color helpers ───────────────────────────────────────────────────────────
+const SIG = {
+  BUY:     { bg: 'bg-emerald-500/15', border: 'border-emerald-500/40', text: 'text-emerald-400', dot: 'bg-emerald-400' },
+  SELL:    { bg: 'bg-rose-500/15',    border: 'border-rose-500/40',    text: 'text-rose-400',    dot: 'bg-rose-400'    },
+  HOLD:    { bg: 'bg-amber-500/15',   border: 'border-amber-500/40',   text: 'text-amber-400',   dot: 'bg-amber-400'   },
+  WAIT:    { bg: 'bg-amber-500/15',   border: 'border-amber-500/40',   text: 'text-amber-400',   dot: 'bg-amber-400'   },
+  ABSTAIN: { bg: 'bg-zinc-800/60',    border: 'border-zinc-700',       text: 'text-zinc-400',    dot: 'bg-zinc-500'    },
 };
+const sigStyle = (s) => SIG[s] || SIG.ABSTAIN;
 
-const MODEL_BADGE = {
-  'Claude Sonnet 4.5': 'bg-orange-500/15 text-orange-300 border-orange-500/30',
-  'Gemini 3 Pro':      'bg-blue-500/15 text-blue-300 border-blue-500/30',
-  'GPT-5.2':           'bg-teal-500/15 text-teal-300 border-teal-500/30',
+const MODEL_META = {
+  'Claude Sonnet 4.5': { accent: '#FF6B35', short: 'Claude' },
+  'Gemini 3 Pro':      { accent: '#4285F4', short: 'Gemini' },
+  'GPT-5.2':           { accent: '#74AA9C', short: 'GPT'    },
+  'Kronos AI':         { accent: '#A855F7', short: 'Kronos' },
 };
+const modelAccent = (name) => (MODEL_META[name] || { accent: '#A1A1AA' }).accent;
 
-function ConfidenceBar({ value }) {
+const fmt = (v) => (v != null && !isNaN(Number(v)) ? `₹${Number(v).toFixed(2)}` : '—');
+
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+function ConfBar({ value, color = '#00E676' }) {
   const v = Math.max(0, Math.min(100, value || 0));
-  const color = v >= 70 ? 'bg-emerald-500' : v >= 40 ? 'bg-amber-500' : 'bg-rose-500';
   return (
-    <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
-      <div className={`${color} h-full transition-all duration-700`} style={{ width: `${v}%` }} />
+    <div className="w-full bg-zinc-800 rounded-full h-1 overflow-hidden">
+      <div className="h-full rounded-full transition-all duration-700" style={{ width: `${v}%`, background: color }} />
     </div>
   );
 }
 
-function ModelVoteCard({ vote }) {
-  const sig = vote.signal || 'N/A';
-  const sigColor = SIGNAL_COLOR[sig] || SIGNAL_COLOR.ABSTAIN;
-  const badge = MODEL_BADGE[vote.model] || 'bg-zinc-800 text-zinc-300';
+function ModelCard({ num, vote }) {
+  const sig = (vote.signal || 'HOLD').toUpperCase();
+  const s   = sigStyle(sig);
+  const acc = modelAccent(vote.model);
+  const ok  = vote.ok !== false;
+
   return (
-    <div className="border border-zinc-800 rounded-xl p-4 bg-zinc-900/40 hover:bg-zinc-900/70 transition-all" data-testid={`vote-card-${vote.model}`}>
-      <div className="flex items-center justify-between mb-3">
-        <span className={`px-2 py-1 rounded-md text-[10px] uppercase tracking-widest border ${badge}`}>{vote.model}</span>
-        <span className="text-[10px] text-zinc-500">w={vote.weight?.toFixed(2)}</span>
-      </div>
-      {vote.ok ? (
-        <>
-          <div className={`inline-flex px-3 py-1 rounded-lg border text-xs font-bold tracking-wider ${sigColor}`}>{sig}</div>
-          <div className="mt-3 mb-1 flex justify-between text-[11px]">
-            <span className="text-zinc-500">Confidence</span>
-            <span className="text-zinc-300 font-mono">{vote.confidence?.toFixed?.(1) ?? vote.confidence}%</span>
+    <div
+      className="border border-zinc-800 bg-[#0E0E10] rounded-lg overflow-hidden"
+      style={{ borderLeftColor: acc, borderLeftWidth: 2 }}
+      data-testid={`model-card-${num}`}
+    >
+      {/* Header row */}
+      <div className="flex items-center gap-2.5 px-3 py-2 border-b border-zinc-800/80">
+        {/* Number badge */}
+        <div
+          className="w-5 h-5 rounded-sm flex items-center justify-center text-[10px] font-black flex-shrink-0"
+          style={{ background: `${acc}22`, color: acc, border: `1px solid ${acc}44` }}
+        >
+          {num}
+        </div>
+        <span className="text-[11px] font-bold text-zinc-200 flex-1 truncate">{vote.model}</span>
+        {ok ? (
+          <div className={`flex items-center gap-1 px-2 py-0.5 rounded-sm border text-[10px] font-black tracking-wider ${s.bg} ${s.border} ${s.text}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+            {sig}
           </div>
-          <ConfidenceBar value={vote.confidence} />
+        ) : (
+          <span className="text-[9px] text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded-sm">FAILED</span>
+        )}
+      </div>
+
+      {ok ? (
+        <div className="px-3 py-2 space-y-2">
+          {/* Price grid */}
+          <div className="grid grid-cols-5 gap-1 text-center">
+            {[
+              { label: 'ENTRY',  val: vote.entry_price, color: '#A1A1AA' },
+              { label: 'SL',     val: vote.stop_loss,   color: '#FF3B30' },
+              { label: 'T1',     val: vote.target_1,    color: '#00E676' },
+              { label: 'T2',     val: vote.target_2,    color: '#00C853' },
+              { label: 'T3',     val: vote.target_3,    color: '#69F0AE' },
+            ].map(({ label, val, color }) => (
+              <div key={label} className="bg-white/3 rounded px-1 py-1">
+                <div className="text-[7px] font-bold uppercase tracking-widest" style={{ color }}>{label}</div>
+                <div className="text-[9px] font-mono font-bold text-zinc-200 mt-0.5 leading-tight">{fmt(val)}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Confidence */}
+          <div className="space-y-1">
+            <div className="flex justify-between text-[9px]">
+              <span className="text-zinc-600">Confidence</span>
+              <span className="font-mono text-zinc-300">{vote.confidence}%</span>
+            </div>
+            <ConfBar value={vote.confidence} color={acc} />
+          </div>
+
+          {/* Rationale */}
           {vote.rationale && (
-            <p className="mt-3 text-[11px] text-zinc-400 leading-relaxed line-clamp-3">{vote.rationale}</p>
+            <p className="text-[9px] text-zinc-500 leading-relaxed line-clamp-2">{vote.rationale}</p>
           )}
-        </>
+        </div>
       ) : (
-        <div className="flex items-center gap-2 text-xs text-rose-400">
-          <X size={14} /> {vote.rationale || 'failed'}
+        <div className="px-3 py-2 text-[10px] text-rose-400 flex items-center gap-1.5">
+          <X size={12} /> {vote.rationale || vote.error || 'Model did not respond'}
         </div>
       )}
     </div>
   );
 }
 
-function ConsensusBlock({ verdict }) {
+function ConsensusRow({ verdict }) {
   if (!verdict) return null;
   const sig = verdict.consensus || 'ABSTAIN';
-  const color = SIGNAL_COLOR[sig] || SIGNAL_COLOR.ABSTAIN;
+  const s = sigStyle(sig);
   return (
-    <div className="border border-zinc-800 rounded-2xl p-6 bg-gradient-to-br from-zinc-900 via-black to-zinc-900" data-testid="ensemble-consensus">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-zinc-500 mb-3">
-        <Sparkle size={14} weight="fill" /> Ensemble Consensus
+    <div
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border ${s.bg} ${s.border}`}
+      data-testid="ensemble-consensus"
+    >
+      <div className={`text-base font-black tracking-widest ${s.text}`} data-testid="consensus-signal">
+        {sig}
       </div>
-      <div className="flex items-end gap-4 mb-4">
-        <div className={`inline-flex px-5 py-2.5 rounded-xl border text-2xl font-black tracking-wider ${color}`} data-testid="consensus-signal">
-          {sig}
+      <div className="flex-1">
+        <div className="flex justify-between text-[9px] mb-1">
+          <span className="text-zinc-500">Ensemble Confidence</span>
+          <span className="font-mono text-zinc-200" data-testid="consensus-confidence">{verdict.confidence}%</span>
         </div>
-        <div className="flex-1">
-          <div className="flex justify-between text-xs text-zinc-400 mb-1">
-            <span>Confidence</span>
-            <span className="font-mono text-zinc-200" data-testid="consensus-confidence">{verdict.confidence}%</span>
-          </div>
-          <ConfidenceBar value={verdict.confidence} />
-        </div>
+        <ConfBar value={verdict.confidence} color={s.dot.replace('bg-', '#').replace('-400', '')} />
       </div>
-      <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
-        {['BUY', 'SELL', 'HOLD'].map(k => (
-          <div key={k} className="border border-zinc-800 rounded-lg p-2 bg-black/40">
-            <div className={`uppercase tracking-widest ${k === 'BUY' ? 'text-emerald-400' : k === 'SELL' ? 'text-rose-400' : 'text-amber-400'}`}>{k}</div>
-            <div className="font-mono text-zinc-300 mt-1">{verdict.weighted_score?.[k]?.toFixed(2) ?? '0.00'}</div>
-          </div>
-        ))}
-      </div>
-      <div className="mt-3 text-[10px] text-zinc-600">
-        {verdict.valid_voters}/{verdict.total_voters} models responded · method: {verdict.method} · mode: {verdict.provider_mode}
+      <div className="text-[9px] text-zinc-500">
+        {verdict.valid_voters}/{verdict.total_voters} voted
       </div>
     </div>
   );
 }
 
+// ─── Main panel ──────────────────────────────────────────────────────────────
+
 export default function EnsembleCockpitPanel({ selectedStock }) {
-  const [status, setStatus] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [activeTask, setActiveTask] = useState(null); // 'signal' | 'gann'
+  const [status, setStatus]           = useState(null);
+  const [busy, setBusy]               = useState(false);
+  const [activeTask, setActiveTask]   = useState(null);
   const [signalResult, setSignalResult] = useState(null);
-  const [gannResult, setGannResult] = useState(null);
-  const [error, setError] = useState(null);
+  const [gannResult, setGannResult]   = useState(null);
+  const [error, setError]             = useState(null);
 
   useEffect(() => {
     fetch(`${API}/status`).then(r => r.json()).then(setStatus).catch(() => {});
@@ -108,11 +150,9 @@ export default function EnsembleCockpitPanel({ selectedStock }) {
   const ticker = selectedStock?.ticker || selectedStock?.id || 'RELIANCE.NS';
 
   const runSignal = async () => {
-    setBusy(true);
-    setActiveTask('signal');
-    setError(null);
+    setBusy(true); setActiveTask('signal'); setError(null);
     try {
-      const r = await fetch(`${API}/signal`, {
+      const r    = await fetch(`${API}/signal`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker }),
@@ -123,17 +163,14 @@ export default function EnsembleCockpitPanel({ selectedStock }) {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
-      setActiveTask(null);
+      setBusy(false); setActiveTask(null);
     }
   };
 
   const runGann = async () => {
-    setBusy(true);
-    setActiveTask('gann');
-    setError(null);
+    setBusy(true); setActiveTask('gann'); setError(null);
     try {
-      const r = await fetch(`${API}/gann-optimize`, {
+      const r    = await fetch(`${API}/gann-optimize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ticker }),
@@ -144,178 +181,192 @@ export default function EnsembleCockpitPanel({ selectedStock }) {
     } catch (e) {
       setError(e.message);
     } finally {
-      setBusy(false);
-      setActiveTask(null);
+      setBusy(false); setActiveTask(null);
     }
   };
 
+  const allModels = signalResult?.verdict?.per_model || [];
+
   return (
-    <div className="p-4 space-y-5" data-testid="ensemble-cockpit">
+    <div className="flex flex-col bg-[#0A0A0A] text-white min-h-full" data-testid="ensemble-cockpit">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-800">
-        <div>
-          <div className="flex items-center gap-2 text-zinc-100 font-bold text-lg">
-            <Brain size={22} weight="duotone" className="text-fuchsia-400" />
-            AI Ensemble Cockpit
-          </div>
-          <p className="text-[11px] text-zinc-500 mt-1">
-            3-model weighted voting · Claude 4.5 + Gemini 3 Pro + GPT-5.2
-          </p>
-        </div>
-        <div className="text-right text-[10px] text-zinc-500">
-          Ticker: <span className="text-zinc-300 font-mono">{ticker}</span>
-          {status && (
-            <div className="mt-1">
-              Mode: <span className="text-zinc-300">{status.provider_mode}</span>
-              {status.key_configured ? (
-                <Check size={11} className="inline ml-1 text-emerald-400" />
-              ) : (
-                <X size={11} className="inline ml-1 text-rose-400" />
-              )}
+      <div className="px-4 py-3 border-b border-white/8 bg-[#0E0E10]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-zinc-100 font-bold text-[13px]">
+              <Brain size={18} weight="duotone" className="text-fuchsia-400" />
+              AI Ensemble Cockpit
             </div>
-          )}
+            <p className="text-[9px] text-zinc-500 mt-0.5">
+              Claude 4.5 · Gemini 3 Pro · GPT-5.2 · Kronos AI
+            </p>
+          </div>
+          <div className="text-right text-[9px] text-zinc-500">
+            <div className="font-mono text-zinc-300">{ticker}</div>
+            {status && (
+              <div className="mt-0.5 flex items-center justify-end gap-1">
+                <span>Mode: {status.provider_mode}</span>
+                {status.key_configured
+                  ? <Check size={10} className="text-emerald-400" />
+                  : <X size={10} className="text-rose-400" />}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Action buttons */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="px-3 py-2.5 grid grid-cols-2 gap-2 border-b border-white/5">
         <button
           onClick={runSignal}
           disabled={busy}
-          className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl border border-fuchsia-500/40 bg-fuchsia-500/10 hover:bg-fuchsia-500/20 text-fuchsia-300 text-xs font-bold uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          className="flex items-center justify-center gap-1.5 py-2 px-3 border border-fuchsia-500/40 bg-fuchsia-500/10 hover:bg-fuchsia-500/20 text-fuchsia-300 text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed transition-all rounded-sm"
           data-testid="btn-ask-ensemble-signal"
         >
           {activeTask === 'signal'
-            ? <><ArrowsClockwise size={14} className="animate-spin" /> Asking 3 models…</>
-            : <><Robot size={16} weight="duotone" /> Ask Ensemble Signal</>}
+            ? <><ArrowsClockwise size={12} className="animate-spin" /> Asking models…</>
+            : <><Robot size={13} weight="duotone" /> Ask All Models</>}
         </button>
         <button
           onClick={runGann}
           disabled={busy}
-          className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl border border-cyan-500/40 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 text-xs font-bold uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          className="flex items-center justify-center gap-1.5 py-2 px-3 border border-cyan-500/40 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 text-[10px] font-bold uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed transition-all rounded-sm"
           data-testid="btn-ai-gann-optimize"
         >
           {activeTask === 'gann'
-            ? <><ArrowsClockwise size={14} className="animate-spin" /> Optimising Gann…</>
-            : <><Target size={16} weight="duotone" /> AI Gann + SoQ Optimise</>}
+            ? <><ArrowsClockwise size={12} className="animate-spin" /> Optimising…</>
+            : <><Target size={13} weight="duotone" /> AI Gann + SoQ</>}
         </button>
       </div>
 
       {error && (
-        <div className="text-xs text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-lg p-3" data-testid="ensemble-error">
+        <div className="mx-3 mt-2.5 text-[10px] text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded px-3 py-2" data-testid="ensemble-error">
           ⚠ {error}
         </div>
       )}
 
-      {/* Signal result */}
-      {signalResult && (
-        <div className="space-y-3" data-testid="signal-result">
-          <ConsensusBlock verdict={signalResult.verdict} />
-          {signalResult.context && (
-            <div className="text-[11px] grid grid-cols-2 md:grid-cols-4 gap-2 bg-zinc-900/40 border border-zinc-800 rounded-xl p-3">
-              {Object.entries(signalResult.context).map(([k, v]) => (
-                <div key={k}>
-                  <span className="text-zinc-500 uppercase tracking-widest">{k.replace(/_/g, ' ')}</span>
-                  <div className="text-zinc-200 font-mono">{String(v)}</div>
+      {/* Model list */}
+      <div className="flex-1 overflow-y-auto px-3 pb-4">
+        {allModels.length > 0 && (
+          <div className="mt-3 space-y-2" data-testid="signal-result">
+            {/* Consensus */}
+            <ConsensusRow verdict={signalResult?.verdict} />
+
+            {/* Numbered model cards */}
+            <div className="text-[8px] font-bold uppercase tracking-[0.2em] text-zinc-600 mt-3 mb-1.5">
+              Individual Model Analysis ({allModels.length} Models)
+            </div>
+            {allModels.map((vote, i) => (
+              <ModelCard key={i} num={i + 1} vote={vote} />
+            ))}
+
+            {/* Kronos not loaded notice */}
+            {!signalResult?.kronos_loaded && (
+              <div className="border border-[#A855F7]/20 bg-[#A855F7]/5 rounded px-3 py-2">
+                <div className="text-[9px] text-[#A855F7] font-bold">Kronos AI — Model Not Loaded</div>
+                <div className="text-[9px] text-zinc-500 mt-0.5">
+                  Click WARMUP on Kronos panel below to load. Rerun after loading.
                 </div>
-              ))}
-            </div>
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {signalResult.verdict?.votes?.map((v, i) => <ModelVoteCard key={i} vote={v} />)}
-          </div>
-        </div>
-      )}
-
-      {/* Gann result */}
-      {gannResult && (
-        <div className="space-y-4 mt-4 pt-4 border-t border-zinc-800" data-testid="gann-result">
-          <div className="flex items-center gap-2 text-cyan-300 text-xs uppercase tracking-[0.2em]">
-            <Target size={14} weight="fill" /> AI Gann Pattern Recognition
-            <span className="ml-auto text-[10px] text-zinc-500">SoQ ring: {gannResult.soq_ring}</span>
-          </div>
-
-          <ConsensusBlock verdict={gannResult.ensemble} />
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/40">
-              <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-2">AI-Chosen Pivot</div>
-              <div className="text-sm text-zinc-200 font-mono">{gannResult.chosen_pivot?.type}</div>
-              <div className="text-xs text-zinc-400 mt-1">
-                ₹{gannResult.chosen_pivot?.price?.toFixed?.(2)} · age {gannResult.chosen_pivot?.age_bars} bars · strength {gannResult.chosen_pivot?.strength}
               </div>
-            </div>
-            <div className="border border-zinc-800 rounded-xl p-3 bg-zinc-900/40">
-              <div className="text-[10px] uppercase tracking-widest text-zinc-500 mb-2">Active Gann Angles</div>
-              <div className="flex flex-wrap gap-1.5">
-                {gannResult.active_angles?.map(a => (
-                  <span key={a} className="px-2 py-1 rounded-md text-[10px] font-mono bg-cyan-500/15 border border-cyan-500/30 text-cyan-300">{a}</span>
-                ))}
-                {gannResult.all_angles?.filter(a => !gannResult.active_angles?.includes(a)).map(a => (
-                  <span key={a} className="px-2 py-1 rounded-md text-[10px] font-mono bg-zinc-800/40 border border-zinc-800 text-zinc-600 line-through">{a}</span>
-                ))}
-              </div>
-            </div>
-          </div>
+            )}
 
-          {/* Gann Fan levels */}
-          <div className="border border-zinc-800 rounded-xl bg-zinc-900/30 overflow-hidden">
-            <div className="px-3 py-2 text-[10px] uppercase tracking-widest text-zinc-500 border-b border-zinc-800 flex items-center gap-2">
-              <ChartLineUp size={12} /> Gann Fan Levels (from pivot ₹{gannResult.chosen_pivot?.price?.toFixed?.(2)})
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 p-3 text-[11px]">
-              {gannResult.gann_fan?.map(g => (
-                <div key={g.name} className="bg-black/40 border border-zinc-800 rounded p-2">
-                  <div className="font-mono text-cyan-300">{g.name} <span className="text-zinc-500">({g.degrees}°)</span></div>
-                  <div className="text-emerald-400">R: ₹{g.resistance_100}</div>
-                  <div className="text-rose-400">S: ₹{g.support_100}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Square-of-9 levels */}
-          <div className="border border-zinc-800 rounded-xl bg-zinc-900/30 overflow-hidden">
-            <div className="px-3 py-2 text-[10px] uppercase tracking-widest text-zinc-500 border-b border-zinc-800 flex items-center justify-between">
-              <span className="flex items-center gap-2"><Lightning size={12} /> Square of 9 — Ring {gannResult.soq_ring}</span>
-              <span className="text-zinc-600">{gannResult.soq_levels?.length} levels</span>
-            </div>
-            <div className="max-h-64 overflow-y-auto p-2 text-[10px] font-mono">
-              <table className="w-full">
-                <thead className="text-zinc-500 text-left">
-                  <tr>
-                    <th className="py-1 px-2">#</th>
-                    <th className="py-1 px-2">Angle</th>
-                    <th className="py-1 px-2 text-emerald-400">Resistance</th>
-                    <th className="py-1 px-2 text-rose-400">Support</th>
-                  </tr>
-                </thead>
-                <tbody className="text-zinc-300">
-                  {gannResult.soq_levels?.map(l => (
-                    <tr key={l.step} className="border-t border-zinc-800/50 hover:bg-zinc-800/30">
-                      <td className="py-1 px-2 text-zinc-500">{l.step}</td>
-                      <td className="py-1 px-2">{l.angle_deg}°</td>
-                      <td className="py-1 px-2 text-emerald-300">₹{l.resistance}</td>
-                      <td className="py-1 px-2 text-rose-300">₹{l.support}</td>
-                    </tr>
+            {/* Context snapshot */}
+            {signalResult?.context && (
+              <div className="mt-2 border border-zinc-800/60 rounded bg-[#0E0E10] px-3 py-2">
+                <div className="text-[8px] font-bold uppercase tracking-[0.2em] text-zinc-600 mb-2">Market Context</div>
+                <div className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-[9px]">
+                  {Object.entries(signalResult.context).map(([k, v]) => (
+                    <div key={k}>
+                      <span className="text-zinc-600 uppercase tracking-wider">{k.replace(/_/g, ' ')}</span>
+                      <div className="font-mono text-zinc-300">{String(v)}</div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Gann result */}
+        {gannResult && (
+          <div className="mt-3 space-y-3 border-t border-zinc-800 pt-3" data-testid="gann-result">
+            <div className="flex items-center gap-2 text-cyan-300 text-[9px] uppercase tracking-[0.15em]">
+              <Target size={12} weight="fill" /> AI Gann Pattern Recognition
+              <span className="ml-auto text-zinc-500">SoQ ring: {gannResult.soq_ring}</span>
+            </div>
+
+            <ConsensusRow verdict={gannResult.ensemble} />
+
+            {/* Gann individual votes */}
+            <div className="space-y-2">
+              {gannResult.ensemble?.votes?.map((v, i) => <ModelCard key={i} num={i + 1} vote={v} />)}
+            </div>
+
+            {/* Pivot */}
+            <div className="border border-zinc-800 rounded px-3 py-2 bg-zinc-900/40 text-[9px]">
+              <div className="text-zinc-500 uppercase tracking-wider mb-1">AI-Chosen Pivot</div>
+              <span className="font-mono text-zinc-200">{gannResult.chosen_pivot?.type}</span>
+              <span className="text-zinc-500 ml-2">
+                ₹{gannResult.chosen_pivot?.price?.toFixed(2)} · age {gannResult.chosen_pivot?.age_bars} bars
+              </span>
+            </div>
+
+            {/* Gann Fan levels */}
+            <div className="border border-zinc-800 rounded overflow-hidden">
+              <div className="px-3 py-1.5 text-[8px] uppercase tracking-widest text-zinc-500 border-b border-zinc-800">
+                Gann Fan Levels
+              </div>
+              <div className="grid grid-cols-2 gap-2 p-2">
+                {gannResult.gann_fan?.map(g => (
+                  <div key={g.name} className="bg-black/40 border border-zinc-800 rounded p-1.5 text-[9px]">
+                    <div className="font-mono text-cyan-300">{g.name} <span className="text-zinc-600">({g.degrees}°)</span></div>
+                    <div className="text-emerald-400">R: ₹{g.resistance_100}</div>
+                    <div className="text-rose-400">S: ₹{g.support_100}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Square of 9 */}
+            <div className="border border-zinc-800 rounded overflow-hidden">
+              <div className="px-3 py-1.5 text-[8px] uppercase tracking-widest text-zinc-500 border-b border-zinc-800 flex items-center justify-between">
+                <span className="flex items-center gap-1"><Lightning size={10} /> Square of 9 — Ring {gannResult.soq_ring}</span>
+                <span>{gannResult.soq_levels?.length} levels</span>
+              </div>
+              <div className="max-h-48 overflow-y-auto p-2 text-[9px] font-mono">
+                <table className="w-full">
+                  <thead className="text-zinc-600 text-left">
+                    <tr>
+                      <th className="py-0.5 px-1">#</th>
+                      <th className="py-0.5 px-1">Angle</th>
+                      <th className="py-0.5 px-1 text-emerald-400">Res</th>
+                      <th className="py-0.5 px-1 text-rose-400">Sup</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-zinc-300">
+                    {gannResult.soq_levels?.map(l => (
+                      <tr key={l.step} className="border-t border-zinc-800/50 hover:bg-zinc-800/30">
+                        <td className="py-0.5 px-1 text-zinc-600">{l.step}</td>
+                        <td className="py-0.5 px-1">{l.angle_deg}°</td>
+                        <td className="py-0.5 px-1 text-emerald-300">₹{l.resistance}</td>
+                        <td className="py-0.5 px-1 text-rose-300">₹{l.support}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
+        )}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {gannResult.ensemble?.votes?.map((v, i) => <ModelVoteCard key={i} vote={v} />)}
+        {!signalResult && !gannResult && !busy && (
+          <div className="text-center py-10 text-zinc-600 text-[11px]">
+            <Brain size={32} weight="duotone" className="mx-auto mb-3 text-zinc-700" />
+            <div>Stock select karo aur <span className="text-fuchsia-400">Ask All Models</span> dabao</div>
+            <div className="text-[9px] mt-1 text-zinc-700">Claude · Gemini · GPT · Kronos — sabhi BUY/SELL/SL/Target denge</div>
           </div>
-        </div>
-      )}
-
-      {!signalResult && !gannResult && !busy && (
-        <div className="text-center py-10 text-zinc-600 text-xs">
-          <Brain size={36} weight="duotone" className="mx-auto mb-3 text-zinc-700" />
-          Pick a stock and hit one of the buttons above to consult the 3-AI ensemble.
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
