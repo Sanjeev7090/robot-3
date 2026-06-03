@@ -10,6 +10,14 @@ Recent fork additions (Feb 2026):
 4. Pro-Level RL Reward Function (Sharpe, Sortino, ATR sizing, Drawdown penalty, loss aversion) (✅ done)
 5. Strategy Weighting Improvements (Top-K sparsity + Prior blend + Market regime hierarchy) (✅ done — Feb 2026)
 6. Risk & Money Management in RL action space (Dynamic SL/TP, risk budget, equity-health scaling, DD circuit breaker) (✅ done — Feb 2026)
+7. Kronos AI Forecast Panel (BUY/SELL/SL/Day Target signals + chart lines) (✅ done — Jun 2026)
+8. 9router AI Router — multi-provider LLM routing with auto-fallback (✅ done — Jun 2026)
+   - Backend: /app/backend/ai_router/ (engine.py + router.py)
+   - Emergent LLM as primary provider (Claude/GPT/Gemini — free via Emergent key)
+   - OpenCode Free (via 9router) as secondary (disabled by default, needs local 9router setup)
+   - All AI features (MiroFish, GPT Analysis, Ensemble) auto-route through this
+   - Frontend tab removed from UI (per user request) but backend APIs intact
+   - ESLint fetchSignal missing dependency fixed (useCallback)
 
 ## RL Environment Spec (updated Feb 2026)
 - **Action space:** Box[-1, 1] shape (16,)
