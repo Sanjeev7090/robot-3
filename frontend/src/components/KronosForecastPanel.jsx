@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { createChart, CrosshairMode } from 'lightweight-charts';
-import { Sparkles, Loader2, AlertCircle, Play } from 'lucide-react';
+import { Sparkles, Loader2, AlertCircle, Play, TrendingUp, TrendingDown, Minus, Target, ShieldAlert, ArrowRight } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -34,6 +34,7 @@ const KronosForecastPanel = ({ selectedStock, timeframe = '1D' }) => {
   const histSeriesRef = useRef(null);
   const fcSeriesRef = useRef(null);
   const volSeriesRef = useRef(null);
+  const priceLinesRef = useRef([]);  // active price lines for signal levels
 
   const [predLen, setPredLen] = useState(30);
   const [loading, setLoading] = useState(false);
@@ -180,6 +181,46 @@ const KronosForecastPanel = ({ selectedStock, timeframe = '1D' }) => {
     seen.clear();
     volSeriesRef.current.setData(uniq(volData));
 
+    // -------- Draw signal price lines --------
+    // Clear existing lines
+    if (priceLinesRef.current.length && fcSeriesRef.current) {
+      priceLinesRef.current.forEach(pl => {
+        try { fcSeriesRef.current.removePriceLine(pl); } catch (_) {}
+      });
+      priceLinesRef.current = [];
+    }
+    const sig = forecast.signal;
+    if (sig && fcSeriesRef.current) {
+      const bullish = sig.direction === 'BUY';
+      const lines = [
+        { price: sig.entry, color: '#FFFFFF', title: `ENTRY ${sig.entry.toFixed(2)}`, lineStyle: 0, lineWidth: 1 },
+        { price: sig.stop_loss, color: '#FF3B30', title: `SL ${sig.stop_loss.toFixed(2)}`, lineStyle: 2, lineWidth: 2 },
+        { price: sig.day_target, color: '#F5A623', title: `DAY ${sig.day_target.toFixed(2)}`, lineStyle: 1, lineWidth: 1 },
+      ];
+      (sig.targets || []).forEach((t, i) => {
+        lines.push({
+          price: t,
+          color: bullish ? '#00E676' : '#FF3B30',
+          title: `T${i + 1} ${t.toFixed(2)}`,
+          lineStyle: 2,
+          lineWidth: 1,
+        });
+      });
+      lines.forEach(l => {
+        try {
+          const pl = fcSeriesRef.current.createPriceLine({
+            price: l.price,
+            color: l.color,
+            lineStyle: l.lineStyle,
+            lineWidth: l.lineWidth,
+            axisLabelVisible: true,
+            title: l.title,
+          });
+          priceLinesRef.current.push(pl);
+        } catch (_) {}
+      });
+    }
+
     chartRef.current.timeScale().fitContent();
   }, [forecast]);
 
@@ -324,6 +365,11 @@ const KronosForecastPanel = ({ selectedStock, timeframe = '1D' }) => {
         </div>
       )}
 
+      {/* Signal Panel — BUY / SELL / SL / Day Target / Targets */}
+      {forecast?.signal && (
+        <SignalRow signal={forecast.signal} />
+      )}
+
       {/* Error banner */}
       {error && (
         <div className="px-4 py-2 bg-[#FF3B30]/10 border-b border-[#FF3B30]/30 flex items-start gap-2">
@@ -417,5 +463,79 @@ const Stat = ({ label, value, color, badge, badgeColor }) => (
     </div>
   </div>
 );
+
+const SignalRow = ({ signal }) => {
+  const dir = signal.direction;
+  const bull = dir === 'BUY';
+  const bear = dir === 'SELL';
+  const wait = dir === 'WAIT';
+  const accent = bull ? '#00E676' : bear ? '#FF3B30' : '#F5A623';
+  const Icon = bull ? TrendingUp : bear ? TrendingDown : Minus;
+
+  const Cell = ({ label, value, color, icon: I, dashed }) => (
+    <div
+      className={`flex flex-col px-3 py-2 border-l border-white/5 first:border-l-0 ${dashed ? 'bg-[#0E0E10]' : ''}`}
+    >
+      <div className="flex items-center gap-1 text-[8px] font-bold uppercase tracking-[0.2em] text-zinc-500">
+        {I && <I className="w-2.5 h-2.5" />}
+        {label}
+      </div>
+      <span className="text-sm font-mono font-bold mt-0.5" style={{ color: color || '#FFFFFF' }}>
+        {typeof value === 'number' ? value.toFixed(2) : value}
+      </span>
+    </div>
+  );
+
+  return (
+    <div
+      className="border-b border-white/10 flex flex-col md:flex-row md:items-stretch"
+      style={{ background: `linear-gradient(90deg, ${accent}1A 0%, #0A0A0A 60%)` }}
+      data-testid="kronos-signal-row"
+    >
+      {/* Direction badge */}
+      <div
+        className="flex items-center gap-2 px-4 py-2 md:py-0 md:min-w-[160px] border-r border-white/10"
+        style={{ background: accent, color: '#000' }}
+      >
+        <Icon className="w-5 h-5" strokeWidth={2.5} />
+        <div className="flex flex-col leading-none">
+          <span className="text-[9px] font-bold uppercase tracking-[0.2em] opacity-80">KRONOS SIGNAL</span>
+          <span className="text-xl font-black uppercase tracking-tight">{dir}</span>
+        </div>
+        <div className="ml-auto flex flex-col leading-none text-right">
+          <span className="text-[9px] font-bold uppercase tracking-wider opacity-80">CONF</span>
+          <span className="text-sm font-mono font-black">{signal.confidence}%</span>
+        </div>
+      </div>
+
+      {/* Levels */}
+      <div className="flex-1 grid grid-cols-3 md:grid-cols-6">
+        <Cell label="Entry" value={signal.entry} color="#FFFFFF" icon={ArrowRight} />
+        <Cell label="Stop Loss" value={signal.stop_loss} color="#FF3B30" icon={ShieldAlert} />
+        <Cell label="Day Target" value={signal.day_target} color="#F5A623" icon={Target} dashed />
+        <Cell label="T1" value={signal.targets?.[0]} color={bull ? '#00E676' : bear ? '#FF3B30' : '#A1A1AA'} />
+        <Cell label="T2" value={signal.targets?.[1]} color={bull ? '#00E676' : bear ? '#FF3B30' : '#A1A1AA'} />
+        <Cell label="T3" value={signal.targets?.[2]} color={bull ? '#00E676' : bear ? '#FF3B30' : '#A1A1AA'} />
+      </div>
+
+      {/* Risk-Reward */}
+      <div className="flex md:flex-col items-center md:items-end justify-between gap-2 px-4 py-2 border-t md:border-t-0 md:border-l border-white/10 md:min-w-[140px]">
+        <div className="flex flex-col leading-none">
+          <span className="text-[8px] font-bold uppercase tracking-[0.2em] text-zinc-500">Risk : Reward</span>
+          <span className="text-sm font-mono font-bold text-white">1 : {signal.risk_reward}</span>
+        </div>
+        <div className="flex flex-col leading-none md:text-right">
+          <span className="text-[8px] font-bold uppercase tracking-[0.2em] text-zinc-500">Expected</span>
+          <span
+            className="text-sm font-mono font-bold"
+            style={{ color: signal.expected_move_pct >= 0 ? '#00E676' : '#FF3B30' }}
+          >
+            {signal.expected_move_pct >= 0 ? '+' : ''}{signal.expected_move_pct}%
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default KronosForecastPanel;

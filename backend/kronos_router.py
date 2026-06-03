@@ -84,11 +84,24 @@ class KronosForecastRequest(BaseModel):
     sample_count: int = 1
 
 
+class KronosSignal(BaseModel):
+    direction: str            # BUY | SELL | WAIT
+    confidence: int           # 0-100
+    entry: float
+    stop_loss: float
+    day_target: float         # 1st predicted candle close
+    targets: List[float]      # T1, T2, T3
+    risk_reward: float
+    expected_move_pct: float
+    rationale: str
+
+
 class KronosForecastResponse(BaseModel):
     ticker: str
     timeframe: str
     history: List[KronosBar]
     forecast: List[KronosBar]
+    signal: KronosSignal
     model: str
     lookback_used: int
     pred_len: int
@@ -159,6 +172,111 @@ def _df_to_bars(df: pd.DataFrame) -> List[KronosBar]:
             volume=float(row.get("volume", row.get("Volume", 0))),
         ))
     return bars
+
+
+def _compute_atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
+    if len(closes) < 2:
+        return 0.0
+    tr_list = []
+    for i in range(1, len(closes)):
+        tr = max(
+            highs[i] - lows[i],
+            abs(highs[i] - closes[i - 1]),
+            abs(lows[i] - closes[i - 1]),
+        )
+        tr_list.append(tr)
+    if not tr_list:
+        return 0.0
+    arr = np.array(tr_list[-period:])
+    return float(np.mean(arr))
+
+
+def _build_signal(history_df: pd.DataFrame, forecast_df: pd.DataFrame) -> dict:
+    """Derive BUY/SELL/WAIT signal with Entry, SL, day_target, T1/T2/T3 from forecast."""
+    last_close = float(history_df["Close"].iloc[-1])
+    h_highs = history_df["High"].astype(float).values
+    h_lows = history_df["Low"].astype(float).values
+    h_closes = history_df["Close"].astype(float).values
+    atr = _compute_atr(h_highs, h_lows, h_closes, period=14)
+    if atr <= 0:
+        atr = max(last_close * 0.01, 0.5)
+
+    f_open = forecast_df["open"].astype(float).values
+    f_high = forecast_df["high"].astype(float).values
+    f_low = forecast_df["low"].astype(float).values
+    f_close = forecast_df["close"].astype(float).values
+
+    final_close = float(f_close[-1])
+    max_high = float(np.max(f_high))
+    min_low = float(np.min(f_low))
+    day_target = float(f_close[0])  # next-candle close
+
+    move_pct = ((final_close - last_close) / last_close) * 100.0 if last_close else 0.0
+    # Bias from cumulative ups vs downs in forecast bars
+    ups = int(np.sum(f_close > last_close))
+    downs = int(np.sum(f_close < last_close))
+    total = max(ups + downs, 1)
+    bull_score = (ups / total) * 100.0
+    bear_score = (downs / total) * 100.0
+
+    # Direction decision: combine % move and majority of bars
+    direction = "WAIT"
+    if move_pct > 0.5 and bull_score >= 55:
+        direction = "BUY"
+    elif move_pct < -0.5 and bear_score >= 55:
+        direction = "SELL"
+
+    # Confidence: weighted by bias strength and magnitude of move (clamped 30..95)
+    bias = max(bull_score, bear_score)
+    mag = min(abs(move_pct) * 5.0, 40.0)  # cap
+    confidence = int(max(30, min(95, 0.6 * bias + mag)))
+    if direction == "WAIT":
+        confidence = int(max(20, min(50, 100 - bias)))
+
+    entry = last_close
+    if direction == "BUY":
+        # SL = min(forecast low, entry - 1.2*ATR)
+        stop_loss = float(min(min_low, entry - 1.2 * atr))
+        # Targets ascending from forecast highs / move
+        t1 = float(max(day_target, entry + 1.0 * atr))
+        t2 = float(max(final_close, entry + 1.8 * atr))
+        t3 = float(max(max_high, entry + 2.8 * atr))
+        targets = sorted([t1, t2, t3])
+        risk = max(entry - stop_loss, 1e-6)
+        reward = max(targets[1] - entry, 1e-6)
+    elif direction == "SELL":
+        stop_loss = float(max(max_high, entry + 1.2 * atr))
+        t1 = float(min(day_target, entry - 1.0 * atr))
+        t2 = float(min(final_close, entry - 1.8 * atr))
+        t3 = float(min(min_low, entry - 2.8 * atr))
+        targets = sorted([t1, t2, t3], reverse=True)
+        risk = max(stop_loss - entry, 1e-6)
+        reward = max(entry - targets[1], 1e-6)
+    else:  # WAIT
+        stop_loss = float(entry - 1.0 * atr)
+        targets = [float(entry + atr), float(entry + 1.5 * atr), float(entry + 2.0 * atr)]
+        risk = atr
+        reward = atr
+
+    rr = float(reward / risk) if risk else 0.0
+
+    rationale = (
+        f"Kronos forecasts {len(f_close)} candles: {ups} bullish / {downs} bearish. "
+        f"Final close {final_close:.2f} vs last {last_close:.2f} ({move_pct:+.2f}%). "
+        f"ATR(14)={atr:.2f}."
+    )
+
+    return {
+        "direction": direction,
+        "confidence": confidence,
+        "entry": float(entry),
+        "stop_loss": float(stop_loss),
+        "day_target": float(day_target),
+        "targets": [float(t) for t in targets],
+        "risk_reward": round(rr, 2),
+        "expected_move_pct": round(move_pct, 2),
+        "rationale": rationale,
+    }
 
 
 # -------- Endpoints --------
@@ -257,6 +375,7 @@ async def kronos_forecast(req: KronosForecastRequest):
         timeframe=req.timeframe,
         history=hist_bars,
         forecast=forecast_bars,
+        signal=KronosSignal(**_build_signal(hist, pred_df)),
         model=os.environ.get("KRONOS_MODEL", "NeoQuasar/Kronos-small"),
         lookback_used=len(hist_bars),
         pred_len=len(forecast_bars),
