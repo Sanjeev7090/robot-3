@@ -211,7 +211,7 @@ OPENAI_API_KEY=sk-proj-[your-key]
 
 ### Frontend Environment (.env)
 ```
-REACT_APP_BACKEND_URL=https://ai-crystal-ball.preview.emergentagent.com
+REACT_APP_BACKEND_URL=https://nse-scanner-live.preview.emergentagent.com
 WDS_SOCKET_PORT=443
 ENABLE_HEALTH_CHECK=false
 ```
