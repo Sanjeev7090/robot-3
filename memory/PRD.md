@@ -172,6 +172,16 @@ Recent fork additions (Feb 2026):
 - Kronos now loads: MODEL: KRONOS-SMALL (from NeoQuasar/Kronos-small on HuggingFace)
 - API tested: `/api/kronos/warmup` → `{loaded: true}`, `/api/kronos/forecast` → returns candles
 
+## Session: VP Click Tooltip (Feb 2026)
+### ChartPanel.jsx
+- **VP Click Interaction**: Clicking any VP price bar shows a popup with:
+  - Price level, POC/VAH/VAL badge if applicable
+  - Buy volume (green bar), Sell volume (red bar)
+  - Delta (buy−sell), Total Volume, % of Peak
+  - ✕ close button; click same bin again to toggle off
+- **Hover Highlight**: Mouse hover highlights the current bin row on canvas
+- Canvas is now `cursor: crosshair` + `pointer-events: auto` when VP is active
+
 ## Session: Volume Profile on Chart + Footprint Restructure (Feb 2026)
 ### ChartPanel.jsx
 - **Volume Profile Canvas Overlay**: Auto-fetches from `/api/orderflow/analyze` when stock is selected

@@ -10,6 +10,15 @@ import { useTheme } from '../context/ThemeContext';
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const VP_WIDTH = 88;
 
+const fmtVol = n => {
+  if (!n && n !== 0) return '0';
+  const v = Math.abs(n);
+  if (v > 1e7) return `${(n/1e7).toFixed(1)}Cr`;
+  if (v > 1e5) return `${(n/1e5).toFixed(1)}L`;
+  if (v > 1e3) return `${(n/1e3).toFixed(1)}K`;
+  return Number(n).toFixed(0);
+};
+
 const ChartPanel = ({
   stockData, loading, selectedStock, onPivotSelect, pivotPoint, gannFan,
   semiLogScale, setSemiLogScale, timeframe, onTimeframeChange, isCrypto,
@@ -24,6 +33,7 @@ const ChartPanel = ({
   const vpDataRef = useRef(null);
   const vpAnimRef = useRef(null);
   const vpPriceLinesRef = useRef([]);
+  const vpHoverYRef = useRef(null);
   const [selectMode, setSelectMode] = useState(null);
   const [showGannLines, setShowGannLines] = useState(true);
   const [lineExtension, setLineExtension] = useState(50);
@@ -31,6 +41,7 @@ const ChartPanel = ({
   const [tfOpen, setTfOpen] = useState(false);
   const [showTrade, setShowTrade] = useState(false);
   const [vpActive, setVpActive] = useState(false);
+  const [vpTooltip, setVpTooltip] = useState(null);
   const { theme } = useTheme();
 
   const timeframes = [
@@ -126,6 +137,30 @@ const ChartPanel = ({
     };
     markEdgeLabel(d.vah_price, 'VAH', '#A855F7');
     markEdgeLabel(d.val_price, 'VAL', '#06B6D4');
+
+    // Hover highlight
+    const hoverY = vpHoverYRef.current;
+    if (hoverY !== null) {
+      let hBin = null, hMin = Infinity;
+      bins.forEach(bin => {
+        const y = series.priceToCoordinate(bin.price_mid);
+        if (y == null) return;
+        const dist = Math.abs(y - hoverY);
+        if (dist < hMin) { hMin = dist; hBin = bin; }
+      });
+      if (hBin && hMin < rowH * 1.5) {
+        const hy = series.priceToCoordinate(hBin.price_mid);
+        if (hy != null) {
+          ctx.fillStyle = 'rgba(255,255,255,0.10)';
+          ctx.fillRect(0, hy - rowH, VP_WIDTH, rowH * 2);
+          ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+          ctx.lineWidth = 0.5;
+          ctx.setLineDash([]);
+          ctx.beginPath(); ctx.moveTo(0, hy); ctx.lineTo(VP_WIDTH, hy); ctx.stroke();
+        }
+      }
+    }
+
     ctx.restore();
   }, []);
 
@@ -162,6 +197,52 @@ const ChartPanel = ({
       console.warn('VP fetch:', e.message);
     }
   }, [clearVPLines]);
+
+  // VP interaction handlers
+  const handleVPMouseMove = useCallback((e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    vpHoverYRef.current = e.clientY - rect.top;
+  }, []);
+
+  const handleVPMouseLeave = useCallback(() => {
+    vpHoverYRef.current = null;
+  }, []);
+
+  const handleVPClick = useCallback((e) => {
+    e.stopPropagation();
+    const series = candlestickSeriesRef.current;
+    const d = vpDataRef.current;
+    if (!series || !d?.vp_bins?.length) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickY = e.clientY - rect.top;
+    const maxVol = Math.max(...d.vp_bins.map(b => b.total_vol)) || 1;
+    const H = chartContainerRef.current?.clientHeight || 300;
+    const rowH = Math.max(3, (H / d.vp_bins.length) * 0.72);
+    let closestBin = null, minDist = Infinity;
+    d.vp_bins.forEach(bin => {
+      const y = series.priceToCoordinate(bin.price_mid);
+      if (y == null) return;
+      const dist = Math.abs(y - clickY);
+      if (dist < minDist) { minDist = dist; closestBin = bin; }
+    });
+    if (closestBin && minDist < rowH * 1.5) {
+      if (vpTooltip?.bin?.price_mid === closestBin.price_mid) {
+        setVpTooltip(null);
+        return;
+      }
+      setVpTooltip({
+        y: Math.max(8, Math.min(clickY, H - 200)),
+        bin: closestBin,
+        maxVol,
+        poc: d.poc_price,
+        vah: d.vah_price,
+        val: d.val_price,
+      });
+    } else {
+      setVpTooltip(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vpTooltip]);
 
   const drawGannLines = (pivot, extension) => {
     if (!chartRef.current || !pivot || !stockData || !showGannLines) return;
@@ -311,6 +392,7 @@ const ChartPanel = ({
     clearVPLines();
     vpDataRef.current = null;
     setVpActive(false);
+    setVpTooltip(null);
     if (!stockData?.bars?.length) return;
     const ticker = selectedStock?.ticker || selectedStock?.symbol || 'STOCK';
     // Small delay so chart settles first
@@ -544,15 +626,90 @@ const ChartPanel = ({
           </div>
         )}
 
-        {/* Volume Profile Canvas Overlay — left side, auto-synced with price scale */}
+        {/* Volume Profile Canvas Overlay — left side, clickable for price-level detail */}
         <canvas
           ref={vpCanvasRef}
+          onClick={handleVPClick}
+          onMouseMove={handleVPMouseMove}
+          onMouseLeave={handleVPMouseLeave}
           style={{
             position: 'absolute', left: 0, top: 0,
-            zIndex: 5, pointerEvents: 'none',
+            zIndex: 5,
+            cursor: vpActive ? 'crosshair' : 'default',
             display: vpActive ? 'block' : 'none',
           }}
         />
+
+        {/* VP Tooltip — price level detail popup */}
+        {vpTooltip && (
+          <div
+            style={{ position: 'absolute', left: VP_WIDTH + 6, top: vpTooltip.y, zIndex: 25, minWidth: 168 }}
+            className="bg-[#0D0D0D] border border-white/20 shadow-2xl text-[9px] font-mono"
+            data-testid="vp-tooltip"
+          >
+            {/* Header */}
+            <div className="px-2.5 py-1.5 border-b border-white/10 flex items-center justify-between gap-2">
+              <span className="text-white font-bold text-[11px]">₹{vpTooltip.bin.price_mid.toFixed(2)}</span>
+              <div className="flex gap-1 items-center flex-wrap justify-end">
+                {vpTooltip.bin.is_poc && (
+                  <span className="text-[#FF6B00] text-[7px] font-bold px-1 border border-[#FF6B00]/50">◆ POC</span>
+                )}
+                {Math.abs(vpTooltip.bin.price_mid - vpTooltip.vah) < vpTooltip.vah * 0.005 && (
+                  <span className="text-[#A855F7] text-[7px] px-1 border border-[#A855F7]/50">VAH</span>
+                )}
+                {Math.abs(vpTooltip.bin.price_mid - vpTooltip.val) < vpTooltip.val * 0.005 && (
+                  <span className="text-[#06B6D4] text-[7px] px-1 border border-[#06B6D4]/50">VAL</span>
+                )}
+                {vpTooltip.bin.in_value_area && !vpTooltip.bin.is_poc && (
+                  <span className="text-zinc-600 text-[7px]">VA</span>
+                )}
+                <button
+                  onClick={() => setVpTooltip(null)}
+                  className="text-zinc-600 hover:text-white ml-1 text-[9px] leading-none"
+                  data-testid="vp-tooltip-close"
+                >✕</button>
+              </div>
+            </div>
+            {/* Volume bars */}
+            <div className="px-2.5 py-2 space-y-2">
+              {[
+                { label: 'Buy', vol: vpTooltip.bin.buy_vol, color: '#00E676' },
+                { label: 'Sell', vol: vpTooltip.bin.sell_vol, color: '#FF3B30' },
+              ].map(({ label, vol, color }) => (
+                <div key={label}>
+                  <div className="flex justify-between mb-0.5">
+                    <span style={{ color }}>{label}</span>
+                    <span style={{ color }} className="font-bold">{fmtVol(vol)}</span>
+                  </div>
+                  <div className="h-1.5 bg-zinc-800 rounded-sm overflow-hidden">
+                    <div
+                      style={{ width: `${(vol / vpTooltip.maxVol) * 100}%`, backgroundColor: color }}
+                      className="h-full rounded-sm"
+                    />
+                  </div>
+                </div>
+              ))}
+              {/* Stats */}
+              <div className="pt-1 border-t border-white/5 space-y-1">
+                {[
+                  {
+                    label: 'Delta',
+                    val: fmtVol(vpTooltip.bin.buy_vol - vpTooltip.bin.sell_vol),
+                    color: vpTooltip.bin.buy_vol >= vpTooltip.bin.sell_vol ? '#00E676' : '#FF3B30',
+                    prefix: vpTooltip.bin.buy_vol >= vpTooltip.bin.sell_vol ? '+' : '',
+                  },
+                  { label: 'Total Vol', val: fmtVol(vpTooltip.bin.total_vol), color: '#D4D4D8' },
+                  { label: '% of Peak', val: `${((vpTooltip.bin.total_vol / vpTooltip.maxVol) * 100).toFixed(1)}%`, color: '#A1A1AA' },
+                ].map(({ label, val, color, prefix = '' }) => (
+                  <div key={label} className="flex justify-between">
+                    <span className="text-zinc-500">{label}</span>
+                    <span style={{ color }}>{prefix}{val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Strategy Overlay Component */}
         <StrategyOverlay 
