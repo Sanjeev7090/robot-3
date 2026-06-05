@@ -171,7 +171,7 @@ function SignalCard({ stock, rank, onPaperTrade }) {
         <div className="flex items-center gap-1.5 mb-2">
           <TrendUp size={12} className="text-[#00E676]" weight="bold" />
           <span className="text-[10px] font-black text-[#00E676] uppercase tracking-wider">
-            {atm.signal || 'BUY OTM CALL'}
+            {(atm.signal || 'BUY OTM CALL').replace(/ATM/gi, 'OTM')}
           </span>
           {atm.estimated && (
             <span className="text-[8px] text-zinc-600 border border-zinc-700 px-1 rounded">EST</span>
