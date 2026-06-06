@@ -5122,7 +5122,7 @@ def run_mini_ai_indicator(bars):
         closes = [b['close'] for b in bars]
 
         if len(closes) < 26:
-            return "WAIT", 50
+            return "WAIT", None, 50
 
         dmi_s  = calc_dmi_score(highs, lows, closes)[0]
         ma_s   = calc_ma_score(closes)
@@ -5134,7 +5134,7 @@ def run_mini_ai_indicator(bars):
         score  = (dmi_s * 0.30 + ma_s * 0.25 + macd_s * 0.20 + rsi_s * 0.15 + stoch_s * 0.10)
 
         if score <= 75 and score >= 25:
-            return "WAIT", round(score, 1)
+            return "WAIT", None, round(score, 1)
 
         atr     = _smc_compute_atr(highs, lows, closes, 14)
         ema20   = calc_ema(closes, 20)
@@ -5322,7 +5322,7 @@ def run_demon_on_bars(bars):
     rsb_signal = run_mini_reverse_swings(bars, "B")
     ev_signal  = run_mini_explosive_volume(bars)
     gs_signal  = run_mini_golden_setup(bars)
-    ai_signal, ai_score = run_mini_ai_indicator(bars)
+    ai_signal, _ai_details, ai_score = run_mini_ai_indicator(bars)
     gz_signal  = run_mini_godzilla(bars)
 
     strategies = {
@@ -5406,7 +5406,7 @@ def run_demon_on_bars(bars):
     rsb_signal = run_mini_reverse_swings(bars, "B")
     ev_signal  = run_mini_explosive_volume(bars)
     gs_signal  = run_mini_golden_setup(bars)
-    ai_signal, ai_score = run_mini_ai_indicator(bars)
+    ai_signal, _ai_details, ai_score = run_mini_ai_indicator(bars)
     gz_signal  = run_mini_godzilla(bars)
 
     strategies = {

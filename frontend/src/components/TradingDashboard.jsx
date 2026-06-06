@@ -417,7 +417,7 @@ const TradingDashboard = () => {
     }
   };
 
-  const fetchSignal = useCallback(async (pivot) => {
+  const fetchSignal = async (pivot) => {
     if (!selectedStock || !pivot || selectedStock.type === 'CRYPTO' || selectedStock.type === 'OPTION') return;
     try {
       const response = await axios.get(`${API}/signal/${selectedStock.ticker}`, {
@@ -425,14 +425,13 @@ const TradingDashboard = () => {
       });
       setSignal(response.data);
     } catch (error) { /* silent */ }
-  }, [selectedStock]);
+  };
 
   useEffect(() => {
-    if (pivotPoint && selectedStock && selectedStock.type !== 'CRYPTO' && selectedStock.type !== 'OPTION') {
-      const interval = setInterval(() => fetchSignal(pivotPoint), 60000);
-      return () => clearInterval(interval);
-    }
-  }, [pivotPoint, selectedStock, fetchSignal]);
+    if (!pivotPoint) return;
+    const interval = setInterval(() => fetchSignal(pivotPoint), 60000);
+    return () => clearInterval(interval);
+  }, [pivotPoint, selectedStock]);
 
   const isCrypto = selectedStock?.type === 'CRYPTO';
   const isOption = selectedStock?.type === 'OPTION';

@@ -302,7 +302,17 @@ In production (proper egress): NSEDirect/NSEPython will be primary.
 - Fully dark/light-mode aware via `.dark` and `html:not(.dark)` selectors
 - Files: `frontend/src/index.css` (CSS classes), `TradingDashboard.jsx` (class applied)
 
-## Session: ESLint Cleanup (Feb 2026)
+## Session: ESLint + run_mini_ai_indicator Fix (Feb 2026)
+- **ESLint `react-hooks/preserve-manual-memoization` fix** (`TradingDashboard.jsx` ~L420):
+  - Replaced `useCallback` on `fetchSignal` with a plain `async` function
+  - `useEffect` interval now correctly uses `pivotPoint` & `selectedStock` as deps
+  - Zero blocking lint errors in TradingDashboard.jsx
+- **`run_mini_ai_indicator` consistent 3-tuple** (`server.py` ~L5109):
+  - All return paths now return `(signal, details_or_None, score)` consistently
+  - Lines 5325, 5409: updated from 2-tuple to 3-tuple unpack (`_ai_details` discarded)
+  - Auto-scanner weighted confluence verified working post-fix
+
+
 - Fixed all 7 exhaustive-deps ESLint warnings in chart hooks:
   - ChartPanel.jsx: 3 warnings (semiLogScale init, drawGannLines, handleChartClick)
   - Gann3DPanel.jsx: 1 warning (canvasRef.current in cleanup — fixed by capturing to local variable)
