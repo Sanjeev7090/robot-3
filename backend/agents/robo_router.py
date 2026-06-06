@@ -1,12 +1,12 @@
 """
-FastAPI Router — Dreamer V3 Robo-Trader (Phase 2)
+FastAPI Router — Dreamer V3 Robo-Trader (Phase 3)
 ==================================================
 Endpoints:
   GET  /api/robo/settings          — fetch current user settings + full RPM risk profile
   POST /api/robo/settings          — update daily_target / allocated_capital (auto-recalculates)
   POST /api/robo/recalculate       — force full recalculation with live market data + audit log
   GET  /api/robo/status            — full robo state (P&L, progress, decision, capital state)
-  POST /api/robo/start             — start autonomous paper-trading loop
+  POST /api/robo/start             — start autonomous trading loop (APScheduler)
   POST /api/robo/stop              — stop auto mode
   POST /api/robo/reset-daily       — reset daily P&L counters
   GET  /api/robo/decision          — latest DreamerV3 decision with RPM-sized position
@@ -16,7 +16,16 @@ Endpoints:
   GET  /api/robo/recalc-history    — last N recalculation audit records from MongoDB
   GET  /api/robo/capital-state     — current DreamerV3 capital state vector
 
-DISCLAIMER: PAPER TRADING ONLY. No guaranteed returns.
+  ── Phase 3 ──────────────────────────────────────────────────────────────────
+  POST /api/robo/mode              — switch execution mode: paper | live | shadow
+  GET  /api/robo/positions         — currently open positions (all modes)
+  GET  /api/robo/orders            — order history (last N closed orders)
+  GET  /api/robo/loop-status       — TradingLoop scheduler state
+  POST /api/robo/set-interval      — change scan interval (1–30 min)
+  POST /api/robo/cancel-pending    — cancel PENDING live order before confirmation delay
+  POST /api/robo/close-all         — emergency: close all open positions
+
+DISCLAIMER: PAPER TRADING ONLY by default. No guaranteed returns.
 """
 
 from __future__ import annotations
@@ -69,7 +78,20 @@ class SettingsRequest(BaseModel):
 
 
 class StartRequest(BaseModel):
-    ticker: Optional[str] = None
+    ticker:           Optional[str] = None
+    interval_minutes: int           = 5    # scan interval: 1–30 min
+
+
+class ModeRequest(BaseModel):
+    mode: str = Field(..., description="paper | live | shadow")
+
+
+class SetIntervalRequest(BaseModel):
+    interval_minutes: int = Field(..., ge=1, le=30, description="Scan interval in minutes")
+
+
+class CancelPendingRequest(BaseModel):
+    order_id: str = Field(..., description="Order ID to cancel (PENDING only)")
 
 
 class RiskPreviewRequest(BaseModel):
@@ -244,18 +266,22 @@ async def get_status():
 @robo_router.post("/start")
 async def start_auto_mode(req: StartRequest):
     """
-    Start the autonomous paper-trading loop.
+    Phase 3: Start the autonomous trading loop (APScheduler).
 
     Before starting, system:
       1. Runs full RPM recalculation with live market data
       2. Checks feasibility — warns if target is aggressive
       3. Resets daily P&L counters
-      4. Spawns background worker (polls DreamerV3 every 60 seconds)
+      4. Starts APScheduler loop (scans every interval_minutes)
+      5. First scan runs 5 seconds after start
 
-    Requires DreamerV3 to be actively training (RL Agent tab).
-    DISCLAIMER: Paper trades only — no real orders placed.
+    interval_minutes: 1–30 min. Default 5 min.
+    DISCLAIMER: Starts in Paper Trading mode unless mode was changed via /api/robo/mode
     """
-    return orch.start_auto_mode(ticker=req.ticker)
+    return orch.start_auto_mode(
+        ticker           = req.ticker,
+        interval_minutes = req.interval_minutes,
+    )
 
 
 # ─── 6. POST /stop ────────────────────────────────────────────────────────────
@@ -447,3 +473,169 @@ async def get_capital_state():
             "trades_today":    state.get("daily_trades", 0),
         },
     }
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 3 ENDPOINTS
+# ════════════════════════════════════════════════════════════════════════════════
+
+# ─── 14. POST /mode ───────────────────────────────────────────────────────────
+@robo_router.post("/mode")
+async def set_mode(req: ModeRequest):
+    """
+    Switch execution mode.
+
+    Modes:
+      paper  : Simulate trades in memory. No real orders. Default.
+      live   : Real orders via Groww API. Requires GROWW_API_KEY + GROWW_API_SECRET.
+               Applies 30% size reduction + 30-second confirmation delay.
+      shadow : Observe-only. Logs decisions but never executes. Useful for monitoring.
+
+    WARNING: Switching to LIVE mode will place REAL orders on Groww.
+    Ensure GROWW_API_KEY and GROWW_API_SECRET are set in backend/.env.
+    The system DOES NOT validate Groww API health before mode switch.
+    """
+    try:
+        from .execution_engine import engine
+        result = engine.set_mode(req.mode)
+        if result.get("success"):
+            # Sync orchestrator state
+            orch._upd(mode=req.mode)
+            # Sync RPM mode
+            rpm.update_settings(mode=req.mode)
+        return {**result, "disclaimer": DISCLAIMER}
+    except Exception as exc:
+        logger.exception("[robo_router] mode switch failed")
+        return {"success": False, "error": str(exc)}
+
+
+# ─── 15. GET /positions ───────────────────────────────────────────────────────
+@robo_router.get("/positions")
+async def get_open_positions():
+    """
+    Currently open positions across all modes (paper / live / shadow).
+    Includes pending live orders awaiting confirmation delay.
+    """
+    try:
+        from .execution_engine import engine
+        stats = engine.get_daily_stats()
+        return {
+            "success":             True,
+            "mode":                engine.mode,
+            "open_positions":      stats["open_positions_list"],
+            "pending_positions":   stats["pending_list"],
+            "shadow_signals":      stats["shadow_list"],
+            "open_count":          stats["open_positions"],
+            "pending_count":       stats["pending_positions"],
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "open_positions": []}
+
+
+# ─── 16. GET /orders ──────────────────────────────────────────────────────────
+@robo_router.get("/orders")
+async def get_order_history(limit: int = Query(50, ge=1, le=200)):
+    """
+    Full order history (closed orders) for today's session.
+    Includes P&L, brokerage, exit reason, DreamerV3 signal, risk profile snapshot.
+    """
+    try:
+        from .execution_engine import engine
+        history = engine.get_order_history(limit=limit)
+        stats   = engine.get_daily_stats()
+        total_pnl  = sum((o.get("pnl") or 0) for o in history)
+        total_net  = sum((o.get("net_pnl") or 0) for o in history)
+        wins       = sum(1 for o in history if (o.get("pnl") or 0) > 0)
+        losses     = len(history) - wins
+        return {
+            "success":        True,
+            "mode":           engine.mode,
+            "orders":         history,
+            "count":          len(history),
+            "daily_pnl":      round(stats["daily_pnl"], 2),
+            "daily_net_pnl":  round(stats["daily_net_pnl"], 2),
+            "daily_brokerage": round(stats["daily_brokerage"], 2),
+            "wins":           wins,
+            "losses":         losses,
+            "win_rate":       round(wins / max(len(history), 1) * 100, 1),
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc), "orders": []}
+
+
+# ─── 17. GET /loop-status ─────────────────────────────────────────────────────
+@robo_router.get("/loop-status")
+async def get_loop_status():
+    """
+    TradingLoop APScheduler state: running, interval, last/next cycle times,
+    last cycle result, market open status.
+    """
+    try:
+        from .trading_loop import loop
+        loop_state = loop.get_status()
+        from .execution_engine import engine
+        exec_stats = engine.get_daily_stats()
+        return {
+            "success":    True,
+            "loop":       loop_state,
+            "exec_stats": exec_stats,
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+# ─── 18. POST /set-interval ───────────────────────────────────────────────────
+@robo_router.post("/set-interval")
+async def set_scan_interval(req: SetIntervalRequest):
+    """
+    Change the scan interval on the fly.
+    If loop is running, it will be restarted with the new interval.
+    Minimum 1 min, maximum 30 min.
+    """
+    try:
+        from .trading_loop import loop
+        result = loop.set_interval(req.interval_minutes)
+        return {**result, "message": f"Scan interval set to {req.interval_minutes} min"}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+# ─── 19. POST /cancel-pending ─────────────────────────────────────────────────
+@robo_router.post("/cancel-pending")
+async def cancel_pending_order(req: CancelPendingRequest):
+    """
+    Cancel a PENDING order before the live confirmation delay expires.
+    Only applicable in LIVE mode — paper/shadow orders are never PENDING.
+    """
+    try:
+        from .execution_engine import engine
+        return engine.cancel_pending(req.order_id)
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+# ─── 20. POST /close-all ──────────────────────────────────────────────────────
+@robo_router.post("/close-all")
+async def emergency_close_all():
+    """
+    Emergency: close ALL open positions immediately.
+    In live mode, this will place market sell/buy orders on Groww.
+    Use in emergencies — rapid market movement, unexpected circuit breakers, etc.
+    """
+    try:
+        from .execution_engine import engine
+        from .dreamer_robo_orchestrator import _fetch_live_price, _prefs as prefs
+        live_price = _fetch_live_price(prefs.ticker) or 0.0
+        prices = {prefs.ticker: live_price}
+        closed = engine.close_all_positions(prices, reason="EMERGENCY_CLOSE")
+        orch._upd(open_trade=None, status="paused")
+        return {
+            "success":        True,
+            "closed_count":   len(closed),
+            "closed_orders":  closed,
+            "message":        f"Closed {len(closed)} position(s) at ₹{live_price:.2f}",
+            "disclaimer":     DISCLAIMER,
+        }
+    except Exception as exc:
+        logger.exception("[robo_router] emergency close-all failed")
+        return {"success": False, "error": str(exc)}

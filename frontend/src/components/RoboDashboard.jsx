@@ -172,6 +172,17 @@ export default function RoboDashboard({ selectedStock }) {
   const [error, setError] = useState(null);
   const pollRef = useRef(null);
 
+  // Phase 3 state
+  const [execMode, setExecMode]         = useState('paper');   // paper | live | shadow
+  const [loopStatus, setLoopStatus]     = useState(null);
+  const [openPositions, setOpenPositions] = useState([]);
+  const [orderHistory, setOrderHistory] = useState([]);
+  const [orderStats, setOrderStats]     = useState({});
+  const [modeLoading, setModeLoading]   = useState(false);
+  const [intervalMin, setIntervalMin]   = useState(5);
+  const [modeWarning, setModeWarning]   = useState(null);
+  const [showLiveWarn, setShowLiveWarn] = useState(false);
+
   // Sync ticker from parent
   useEffect(() => {
     if (selectedStock?.ticker && selectedStock.type !== 'CRYPTO' && selectedStock.type !== 'OPTION') {
@@ -182,9 +193,12 @@ export default function RoboDashboard({ selectedStock }) {
   // Fetch full state
   const fetchState = useCallback(async () => {
     try {
-      const [stRes, auditRes] = await Promise.all([
+      const [stRes, auditRes, loopRes, posRes, ordRes] = await Promise.all([
         axios.get(`${API}/robo/status`),
         axios.get(`${API}/robo/audit?limit=20`),
+        axios.get(`${API}/robo/loop-status`).catch(() => ({ data: {} })),
+        axios.get(`${API}/robo/positions`).catch(() => ({ data: {} })),
+        axios.get(`${API}/robo/orders?limit=30`).catch(() => ({ data: {} })),
       ]);
       setRoboState(stRes.data);
       setAudit(auditRes.data.trades || []);
@@ -203,6 +217,24 @@ export default function RoboDashboard({ selectedStock }) {
           risk_tolerance:      stRes.data.risk_tolerance      || 'moderate',
         });
         if (stRes.data.capital_state_vector) setCapitalState(stRes.data.capital_state_vector);
+        if (stRes.data.mode) setExecMode(stRes.data.mode);
+      }
+      // Phase 3: loop + positions + orders
+      if (loopRes.data?.loop) setLoopStatus(loopRes.data.loop);
+      if (posRes.data?.open_positions) {
+        setOpenPositions(posRes.data.open_positions || []);
+        if (posRes.data.mode) setExecMode(posRes.data.mode);
+      }
+      if (ordRes.data?.orders) {
+        setOrderHistory(ordRes.data.orders || []);
+        setOrderStats({
+          daily_pnl:    ordRes.data.daily_pnl,
+          daily_net_pnl: ordRes.data.daily_net_pnl,
+          wins:          ordRes.data.wins,
+          losses:        ordRes.data.losses,
+          win_rate:      ordRes.data.win_rate,
+          brokerage:     ordRes.data.daily_brokerage,
+        });
       }
     } catch (e) {
       /* silent */
@@ -279,13 +311,76 @@ export default function RoboDashboard({ selectedStock }) {
       if (isActive) {
         await axios.post(`${API}/robo/stop`);
       } else {
-        await axios.post(`${API}/robo/start`, { ticker: settings.ticker });
+        await axios.post(`${API}/robo/start`, {
+          ticker: settings.ticker,
+          interval_minutes: intervalMin,
+        });
       }
       await fetchState();
     } catch (e) {
       setError(e.response?.data?.detail || e.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleModeChange = async (newMode) => {
+    if (newMode === 'live' && execMode !== 'live') {
+      setShowLiveWarn(true);
+      return;
+    }
+    setModeLoading(true);
+    setModeWarning(null);
+    try {
+      const res = await axios.post(`${API}/robo/mode`, { mode: newMode });
+      if (res.data.success) {
+        setExecMode(newMode);
+        setModeWarning(res.data.disclaimer);
+      } else {
+        setError(res.data.error || 'Mode switch failed');
+      }
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message);
+    } finally {
+      setModeLoading(false);
+    }
+  };
+
+  const handleConfirmLiveMode = async () => {
+    setShowLiveWarn(false);
+    setModeLoading(true);
+    try {
+      const res = await axios.post(`${API}/robo/mode`, { mode: 'live' });
+      if (res.data.success) {
+        setExecMode('live');
+        setModeWarning(res.data.disclaimer);
+      } else {
+        setError(res.data.error || 'Live mode switch failed');
+      }
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message);
+    } finally {
+      setModeLoading(false);
+    }
+  };
+
+  const handleSetInterval = async (mins) => {
+    setIntervalMin(mins);
+    if (roboState?.auto_mode) {
+      try {
+        await axios.post(`${API}/robo/set-interval`, { interval_minutes: mins });
+      } catch (e) { /* silent */ }
+    }
+  };
+
+  const handleCloseAll = async () => {
+    if (!window.confirm('Close ALL open positions now? This cannot be undone.')) return;
+    try {
+      const res = await axios.post(`${API}/robo/close-all`);
+      if (res.data.success) await fetchState();
+      else setError(res.data.error || 'Close-all failed');
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message);
     }
   };
 
@@ -341,9 +436,17 @@ export default function RoboDashboard({ selectedStock }) {
       </div>
 
       {/* ── Disclaimer ── */}
-      <div className="bg-amber-900/20 border-b border-amber-700/30 px-4 py-1.5">
-        <p className="text-[10px] text-amber-400 text-center max-w-4xl mx-auto">
-          ⚠️ PAPER TRADING ONLY — No real capital at risk. No guaranteed returns. Past performance ≠ future results. Consult a SEBI-registered advisor.
+      <div className="border-b border-amber-700/30 px-4 py-1.5" style={{
+        background: execMode === 'live'
+          ? 'rgba(239,68,68,0.08)'
+          : 'rgba(120,53,15,0.15)',
+      }}>
+        <p className="text-[10px] text-center max-w-4xl mx-auto" style={{
+          color: execMode === 'live' ? '#ef4444' : '#d97706',
+        }}>
+          {execMode === 'live'
+            ? '🔴 LIVE MODE ACTIVE — REAL ORDERS ON GROWW. Capital at risk. Circuit breakers active. No guaranteed returns.'
+            : '⚠️ PAPER TRADING — No real capital at risk. No guaranteed returns. Past performance ≠ future results. Consult a SEBI-registered advisor.'}
         </p>
       </div>
 
@@ -710,6 +813,297 @@ export default function RoboDashboard({ selectedStock }) {
           </div>
         )}
 
+        {/* ── PHASE 3: Execution Mode Control ── */}
+        <div className="bg-zinc-900/80 border border-zinc-700/40 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-sm font-bold text-white">Execution Mode</h2>
+              <p className="text-[10px] text-zinc-500 mt-0.5">Controls how orders are placed</p>
+            </div>
+            {/* Mode badge */}
+            <div
+              className="px-3 py-1 rounded-full text-xs font-bold tracking-wide"
+              style={{
+                background: execMode === 'live' ? '#ef444420' : execMode === 'shadow' ? '#6366f120' : '#10b98120',
+                color:      execMode === 'live' ? '#ef4444'   : execMode === 'shadow' ? '#818cf8'   : '#10b981',
+                border: `1px solid ${execMode === 'live' ? '#ef444440' : execMode === 'shadow' ? '#6366f140' : '#10b98140'}`,
+              }}
+              data-testid="execution-mode-badge"
+            >
+              {execMode === 'live' ? '🔴 LIVE' : execMode === 'shadow' ? '👁 SHADOW' : '📄 PAPER'}
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            {[
+              { key: 'paper',  label: 'Paper',  icon: '📄', desc: 'Simulate trades in memory. No real orders. Safe default.' },
+              { key: 'shadow', label: 'Shadow', icon: '👁',  desc: 'Observe-only mode. Logs decisions. Zero execution.' },
+              { key: 'live',   label: 'Live',   icon: '🔴', desc: 'REAL orders on Groww. Requires API keys in .env.' },
+            ].map(({ key, label, icon, desc }) => (
+              <button
+                key={key}
+                onClick={() => handleModeChange(key)}
+                disabled={modeLoading}
+                data-testid={`mode-btn-${key}`}
+                title={desc}
+                className={`py-2 rounded-xl text-xs font-semibold transition-all border ${
+                  execMode === key
+                    ? key === 'live'
+                      ? 'bg-red-600/30 border-red-500/60 text-red-300'
+                      : key === 'shadow'
+                      ? 'bg-indigo-600/30 border-indigo-500/60 text-indigo-300'
+                      : 'bg-emerald-600/30 border-emerald-500/60 text-emerald-300'
+                    : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
+                }`}
+              >
+                {icon} {label}
+              </button>
+            ))}
+          </div>
+          {/* Mode info */}
+          <div className="text-[10px] space-y-1">
+            {execMode === 'paper' && (
+              <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-3 py-2 text-emerald-400">
+                Paper Mode: Simulates trades in memory. P&amp;L tracked with realistic brokerage costs. No Groww API needed.
+              </div>
+            )}
+            {execMode === 'shadow' && (
+              <div className="bg-indigo-900/20 border border-indigo-700/30 rounded-lg px-3 py-2 text-indigo-300">
+                Shadow Mode: DreamerV3 observes market and logs what it would trade — but never executes. Pure monitoring.
+              </div>
+            )}
+            {execMode === 'live' && (
+              <div className="bg-red-900/30 border border-red-600/50 rounded-lg px-3 py-2 text-red-400">
+                🔴 LIVE MODE ACTIVE — Real orders placed on Groww with 30s confirmation delay. GROWW_API_KEY required.
+                30% position size reduction applied as safety margin.
+              </div>
+            )}
+            {modeWarning && (
+              <p className="text-zinc-500 mt-1 px-1">{modeWarning}</p>
+            )}
+          </div>
+          {/* Scan interval */}
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-[10px] text-zinc-500 min-w-fit">Scan Interval:</span>
+            <div className="flex gap-1">
+              {[1, 5, 10, 15, 30].map(m => (
+                <button
+                  key={m}
+                  onClick={() => handleSetInterval(m)}
+                  data-testid={`interval-btn-${m}`}
+                  className={`px-2 py-1 rounded text-[10px] font-semibold border transition-colors ${
+                    intervalMin === m
+                      ? 'bg-violet-600/30 border-violet-500/50 text-violet-300'
+                      : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:border-zinc-600'
+                  }`}
+                >
+                  {m}m
+                </button>
+              ))}
+            </div>
+            {loopStatus?.running && (
+              <span className="ml-auto text-[10px] text-emerald-400 animate-pulse">● Loop active</span>
+            )}
+          </div>
+        </div>
+
+        {/* ── PHASE 3: Loop Status + Execution Stats ── */}
+        {loopStatus && (
+          <div className="bg-zinc-900/80 border border-zinc-700/40 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold text-white">Trading Loop Status</h2>
+              <div className="flex items-center gap-2">
+                <div
+                  className={`w-2 h-2 rounded-full ${loopStatus.running ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}`}
+                />
+                <span className="text-[10px] text-zinc-400">
+                  {loopStatus.running ? 'Running' : 'Stopped'} · {loopStatus.interval_minutes}min interval
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+              <StatCard
+                label="Cycles Run"
+                value={loopStatus.cycle_count || 0}
+                color="#a78bfa"
+                icon="🔄"
+              />
+              <StatCard
+                label="Last Cycle"
+                value={loopStatus.last_cycle_time
+                  ? new Date(loopStatus.last_cycle_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+                  : '—'}
+                color="#a1a1aa"
+                sub={loopStatus.last_cycle_status || ''}
+                icon="⏱"
+              />
+              <StatCard
+                label="Next Cycle"
+                value={loopStatus.next_cycle_time
+                  ? new Date(loopStatus.next_cycle_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+                  : '—'}
+                color={loopStatus.running ? '#10b981' : '#6b7280'}
+                icon="⏰"
+              />
+              <StatCard
+                label="Market Open"
+                value={loopStatus.market_open ? 'YES' : 'NO'}
+                color={loopStatus.market_open ? '#10b981' : '#ef4444'}
+                sub="NSE 09:15–15:30 IST"
+                icon="🏦"
+              />
+            </div>
+            {/* Execution stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <StatCard
+                label="Fills Today"
+                value={orderStats.daily_pnl != null ? (orderHistory.length) : 0}
+                color="#f59e0b"
+                icon="✅"
+              />
+              <StatCard
+                label="P&L Today"
+                value={orderStats.daily_pnl != null ? `${(orderStats.daily_pnl||0)>=0?'+':''}₹${Math.abs(orderStats.daily_pnl||0).toFixed(0)}` : '—'}
+                color={(orderStats.daily_pnl||0)>=0 ? '#10b981' : '#ef4444'}
+                sub="gross"
+                icon="💰"
+              />
+              <StatCard
+                label="Net P&L"
+                value={orderStats.daily_net_pnl != null ? `${(orderStats.daily_net_pnl||0)>=0?'+':''}₹${Math.abs(orderStats.daily_net_pnl||0).toFixed(0)}` : '—'}
+                color={(orderStats.daily_net_pnl||0)>=0 ? '#10b981' : '#ef4444'}
+                sub="after brokerage"
+                icon="📊"
+              />
+              <StatCard
+                label="Win Rate"
+                value={orderStats.win_rate != null ? `${orderStats.win_rate}%` : '—'}
+                color="#06b6d4"
+                sub={`${orderStats.wins||0}W / ${orderStats.losses||0}L`}
+                icon="🏆"
+              />
+            </div>
+            {loopStatus.last_error && (
+              <div className="mt-2 text-[10px] text-red-400 bg-red-900/20 rounded px-2 py-1">
+                Last error: {loopStatus.last_error}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── PHASE 3: Open Positions (Enhanced) ── */}
+        {openPositions.length > 0 && (
+          <div className="bg-zinc-900/80 border border-emerald-600/30 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold text-emerald-400 flex items-center gap-2">
+                <span className="animate-pulse">●</span> Open Positions ({openPositions.length})
+              </h2>
+              <button
+                onClick={handleCloseAll}
+                className="px-3 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 text-xs font-semibold transition-colors"
+                data-testid="close-all-btn"
+              >
+                Close All
+              </button>
+            </div>
+            <div className="space-y-2">
+              {openPositions.map((pos) => (
+                <div
+                  key={pos.order_id}
+                  className="bg-zinc-800/50 border border-zinc-700/30 rounded-xl p-3"
+                  data-testid={`position-row-${pos.order_id}`}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <span
+                      className="text-[10px] font-bold px-2 py-0.5 rounded"
+                      style={{
+                        background: pos.direction === 'BUY' ? '#10b98133' : '#ef444433',
+                        color:      pos.direction === 'BUY' ? '#10b981'   : '#ef4444',
+                      }}
+                    >
+                      {pos.direction}
+                    </span>
+                    <span className="text-zinc-300 text-xs font-mono font-bold">{pos.ticker}</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-400">{pos.mode?.toUpperCase()}</span>
+                    {pos.status === 'PENDING' && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-400 animate-pulse">
+                        PENDING CONFIRM
+                      </span>
+                    )}
+                    <span className="ml-auto text-[10px] text-zinc-500">#{pos.order_id}</span>
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
+                    {[
+                      { label: 'Entry',    val: `₹${fmt(pos.entry_price, 0)}`,  color: '#f59e0b' },
+                      { label: 'Qty',      val: pos.quantity,                     color: '#a1a1aa' },
+                      { label: 'Value',    val: fmtInr(pos.position_value),       color: '#3b82f6' },
+                      { label: 'SL',       val: `₹${fmt(pos.sl_price, 0)}`,      color: '#ef4444' },
+                      { label: 'TP',       val: `₹${fmt(pos.tp_price, 0)}`,      color: '#10b981' },
+                      { label: 'Conf',     val: `${pos.confidence}%`,            color: '#a78bfa' },
+                    ].map(({ label, val, color }) => (
+                      <div key={label} className="bg-zinc-900/60 rounded-lg p-1.5">
+                        <p className="text-[9px] text-zinc-600">{label}</p>
+                        <p className="text-[11px] font-bold" style={{ color }}>{val}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {pos.strategy_meta?.source && (
+                    <p className="text-[9px] text-zinc-600 mt-1 text-right">
+                      Signal: {pos.strategy_meta.source} · Dreamer: {fmt(pos.dreamer_signal, 3)}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── PHASE 3: Order History (Engine orders, all modes) ── */}
+        {orderHistory.length > 0 && (
+          <div className="bg-zinc-900/80 border border-zinc-700/40 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold text-white">Execution Order History</h2>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="text-emerald-400">{orderStats.wins||0}W</span>
+                <span className="text-red-400">{orderStats.losses||0}L</span>
+                <span className="text-zinc-400">{orderStats.win_rate||0}% WR</span>
+                <span className={`font-bold ${(orderStats.daily_net_pnl||0)>=0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {(orderStats.daily_net_pnl||0)>=0?'+':''}₹{Math.abs(orderStats.daily_net_pnl||0).toFixed(0)} net
+                </span>
+              </div>
+            </div>
+            <div className="space-y-1 max-h-48 overflow-y-auto custom-scroll">
+              {orderHistory.map((order, i) => {
+                const isPnlPos = (order.pnl || 0) >= 0;
+                return (
+                  <div
+                    key={order.order_id || i}
+                    className={`flex items-center gap-2 py-1.5 px-3 rounded-lg border ${
+                      i % 2 === 0 ? 'bg-zinc-800/30' : 'bg-zinc-800/10'
+                    } border-zinc-700/20`}
+                    data-testid={`order-row-${order.order_id}`}
+                  >
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded`}
+                      style={{
+                        background: order.direction === 'BUY' ? '#10b98133' : '#ef444433',
+                        color:      order.direction === 'BUY' ? '#10b981' : '#ef4444',
+                      }}>
+                      {order.direction}
+                    </span>
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-zinc-700 text-zinc-500">{order.mode}</span>
+                    <span className="text-zinc-300 text-xs font-mono flex-1 truncate">{order.ticker}</span>
+                    <span className="text-zinc-500 text-[10px]">@ ₹{fmt(order.entry_price,0)}</span>
+                    <span className="text-zinc-500 text-[9px]">→ ₹{fmt(order.exit_price,0)}</span>
+                    <span className={`text-xs font-bold ${isPnlPos ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {isPnlPos ? '+' : ''}₹{fmt(order.net_pnl || order.pnl, 0)}
+                    </span>
+                    <span className="text-[9px] text-zinc-600">{order.exit_reason}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* ── Auto Mode Panel + DreamerV3 Decision ── */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Auto Mode Control */}
@@ -719,6 +1113,7 @@ export default function RoboDashboard({ selectedStock }) {
               <button
                 onClick={handleToggleAuto}
                 disabled={loading || rs?.circuit_breaker}
+                data-testid="toggle-auto-btn"
                 className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all ${
                   isActive
                     ? 'bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300'
@@ -739,17 +1134,26 @@ export default function RoboDashboard({ selectedStock }) {
             </div>
             <div className="space-y-2 text-xs text-zinc-400">
               <div className="flex items-center gap-2">
-                <span className="text-emerald-400">✓</span> Paper trading only — no real orders
+                <span className="text-emerald-400">✓</span>
+                {execMode === 'paper'  && 'Paper mode — no real orders placed'}
+                {execMode === 'shadow' && 'Shadow mode — observe only, no orders'}
+                {execMode === 'live'   && <span className="text-red-400">⚠ LIVE mode — real Groww orders</span>}
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-emerald-400">✓</span> DreamerV3 scans every 60 seconds
+                <span className="text-emerald-400">✓</span>
+                Scans every {intervalMin} min via APScheduler
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-emerald-400">✓</span> Circuit breaker at{' '}
+                <span className="text-emerald-400">✓</span>
+                Circuit breaker at{' '}
                 <span className="text-amber-400">{fmtInr(rp.max_daily_loss_inr)} loss</span> or 5% drawdown
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-blue-400">ℹ</span> Requires DreamerV3 training (RL Agent tab)
+                <span className="text-emerald-400">✓</span>
+                EOD forced close at 15:15 IST
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-blue-400">ℹ</span> Meta decision: DreamerV3 (60%) + Technical (40%)
               </div>
             </div>
             {dec?.dreamer_active === false && (
@@ -935,6 +1339,53 @@ export default function RoboDashboard({ selectedStock }) {
           )}
         </div>
       </div>
+
+      {/* ── PHASE 3: Live Mode Warning Modal ── */}
+      {showLiveWarn && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
+          <div className="bg-zinc-900 border border-red-700/60 rounded-2xl w-full max-w-md shadow-2xl">
+            <div className="p-5 border-b border-red-800/40">
+              <h2 className="font-black text-red-400 text-base flex items-center gap-2">
+                🔴 LIVE TRADING WARNING
+              </h2>
+            </div>
+            <div className="p-5 space-y-3 text-sm text-zinc-300">
+              <p className="font-semibold text-red-300">
+                You are about to switch to LIVE mode. This will place REAL orders on your Groww account.
+              </p>
+              <ul className="space-y-2 text-xs text-zinc-400 list-disc ml-4">
+                <li>Real capital from your Groww account will be used</li>
+                <li>No guaranteed returns — trading involves risk of loss</li>
+                <li>GROWW_API_KEY and GROWW_API_SECRET must be in backend/.env</li>
+                <li>30-second confirmation delay before each order</li>
+                <li>30% position size reduction applied as safety margin</li>
+                <li>Circuit breakers will close positions on drawdown events</li>
+                <li>This system is experimental — use only with capital you can afford to lose</li>
+              </ul>
+              <p className="text-[10px] text-zinc-500">
+                By confirming, you accept full responsibility for any financial outcomes.
+                This software is provided as-is with no warranty.
+              </p>
+            </div>
+            <div className="flex gap-3 p-5 border-t border-zinc-800">
+              <button
+                onClick={() => setShowLiveWarn(false)}
+                className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-400 rounded-xl text-sm font-semibold"
+              >
+                Cancel — Stay in Paper
+              </button>
+              <button
+                onClick={handleConfirmLiveMode}
+                disabled={modeLoading}
+                className="flex-1 py-2.5 bg-red-700 hover:bg-red-600 text-white rounded-xl text-sm font-bold disabled:opacity-50"
+                data-testid="confirm-live-mode-btn"
+              >
+                {modeLoading ? 'Switching…' : 'I Understand — Enable Live'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Settings Modal ── */}
       {settingsOpen && editSettings && (

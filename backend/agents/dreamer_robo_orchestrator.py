@@ -8,6 +8,8 @@ Architecture (Hierarchical Multi-Agent):
   2. DreamerV3 Core       : World Model + Actor-Critic (existing dreamer_trainer)
   3. Risk & Portfolio Agent: Dynamic position sizing (VaR/CVaR, Calmar, Sharpe)
   4. Meta-Orchestrator    : Combines DreamerV3 + user-defined targets → paper execution
+  5. Execution Engine     : Phase 3 — paper / live / shadow order management
+  6. Trading Loop         : Phase 3 — APScheduler scan-and-execute loop
 
 User-Controlled Settings (editable at any time):
   - daily_profit_target  (e.g., ₹500, ₹2000)
@@ -20,13 +22,11 @@ System auto-recalculates:
   - Feasibility tier (Easily Achievable / Achievable / Moderate / Aggressive / Unrealistic)
   - VaR 1-day 95% confidence
 
-Reward Function (DreamerV3 shaping):
-  r = daily_target_progress × TARGET_WEIGHT
-    + Sharpe_rolling × SHARPE_WEIGHT
-    + Calmar_rolling × CALMAR_WEIGHT
-    - drawdown_excess_penalty
-    - transaction_costs
-    + capital_protection_bonus
+Phase 3 Additions:
+  - ExecutionEngine: paper/live/shadow order lifecycle
+  - TradingLoop: APScheduler-powered periodic scan cycle
+  - Groww API integration for live mode
+  - Full trade audit with execution metadata
 
 Safety Circuit Breakers:
   - Max daily loss limit: 1.5× daily target or 2% capital (whichever is smaller)
@@ -326,7 +326,7 @@ _state: Dict = {
     # Mode
     "auto_mode":            False,
     "status":               "idle",       # idle | scanning | trading | paused | circuit_breaker
-    "mode":                 "paper",      # paper | shadow
+    "mode":                 "paper",      # paper | live | shadow
     # Daily progress
     "daily_pnl":            0.0,
     "daily_trades":         0,
@@ -1067,7 +1067,18 @@ def update_user_preferences(
     }
 
 
-def start_auto_mode(ticker: Optional[str] = None) -> Dict:
+def start_auto_mode(
+    ticker: Optional[str] = None,
+    interval_minutes: int = 5,
+) -> Dict:
+    """
+    Phase 3: Start autonomous trading loop via TradingLoop (APScheduler).
+    Falls back to legacy thread-based worker if TradingLoop unavailable.
+
+    Args:
+        ticker:           Override ticker for this session.
+        interval_minutes: Scan interval (1–30 min). Default 5.
+    """
     global _robo_thread, _prefs
 
     if _state.get("auto_mode") and _state.get("status") not in ("paused", "idle", "circuit_breaker"):
@@ -1076,18 +1087,60 @@ def start_auto_mode(ticker: Optional[str] = None) -> Dict:
     if ticker:
         _prefs.ticker = ticker
 
+    # Sync execution engine mode with current orchestrator mode
+    try:
+        from .execution_engine import engine
+        engine.set_mode(_state.get("mode", "paper"))
+    except Exception as _e:
+        logger.warning("[Orchestrator] ExecutionEngine sync failed: %s", _e)
+
     # Reset daily counters
     _upd(
-        daily_pnl       = 0.0,
-        daily_trades    = 0,
+        daily_pnl        = 0.0,
+        daily_trades     = 0,
         daily_target_pct = 0.0,
-        daily_drawdown  = 0.0,
-        circuit_breaker = False,
-        circuit_reason  = None,
-        error           = None,
-        open_trade      = None,
+        daily_drawdown   = 0.0,
+        circuit_breaker  = False,
+        circuit_reason   = None,
+        error            = None,
+        open_trade       = None,
+        auto_mode        = True,
+        uptime_start     = datetime.now(timezone.utc).isoformat(),
     )
 
+    # Phase 3: Try TradingLoop first
+    try:
+        from .trading_loop import loop as _loop
+        result = _loop.start(interval_minutes=interval_minutes)
+        if result.get("success"):
+            _upd(status="scanning")
+            logger.info(
+                "[Orchestrator] TradingLoop started | interval=%dmin | ticker=%s",
+                interval_minutes, _prefs.ticker,
+            )
+            return {
+                "success":          True,
+                "interval_minutes": interval_minutes,
+                "message": (
+                    f"Auto mode started | Mode: {_state.get('mode','paper').upper()} | "
+                    f"Scanning every {interval_minutes} min | "
+                    f"Target: ₹{_prefs.daily_profit_target:.0f} | "
+                    f"Capital: ₹{_prefs.allocated_capital:,.0f}"
+                ),
+                "disclaimer": (
+                    "⚠️  PAPER TRADING — No real orders. No guaranteed returns."
+                    if _state.get("mode") == "paper" else
+                    "🔴 LIVE MODE ACTIVE — Real orders will be placed. Capital at risk."
+                    if _state.get("mode") == "live" else
+                    "👁  SHADOW MODE — Observing only. No orders placed."
+                ),
+            }
+    except Exception as _loop_err:
+        logger.warning(
+            "[Orchestrator] TradingLoop failed (%s) — falling back to legacy worker", _loop_err
+        )
+
+    # Fallback: legacy thread-based worker
     _stop_evt.clear()
     _robo_thread = threading.Thread(
         target   = _robo_worker,
@@ -1100,7 +1153,7 @@ def start_auto_mode(ticker: Optional[str] = None) -> Dict:
     return {
         "success": True,
         "message": (
-            f"Auto mode started (PAPER) | Target: ₹{_prefs.daily_profit_target:.0f} | "
+            f"Auto mode started (PAPER/legacy) | Target: ₹{_prefs.daily_profit_target:.0f} | "
             f"Capital: ₹{_prefs.allocated_capital:,.0f}"
         ),
         "disclaimer": "PAPER TRADING ONLY. No real capital at risk. No guaranteed returns.",
@@ -1108,6 +1161,16 @@ def start_auto_mode(ticker: Optional[str] = None) -> Dict:
 
 
 def stop_auto_mode() -> Dict:
+    """Stop auto mode — stops TradingLoop if running, else legacy thread."""
+    # Stop TradingLoop
+    try:
+        from .trading_loop import loop as _loop
+        if _loop._running:
+            _loop.stop()
+    except Exception as _e:
+        logger.debug("[Orchestrator] TradingLoop stop: %s", _e)
+
+    # Stop legacy thread
     _stop_evt.set()
     _upd(auto_mode=False, status="paused")
     return {"success": True, "message": "Auto mode stopped"}

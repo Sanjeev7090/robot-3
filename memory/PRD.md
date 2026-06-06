@@ -152,6 +152,34 @@ Recent fork additions (Feb 2026):
 
 ## Session: DreamerV3 RL + Kronos Fix (Jun 2026)
 
+### DreamerV3 Robo-Trader — Phase 3 Execution Engine (✅ done — Jun 2026)
+- `execution_engine.py` — Full order lifecycle manager
+  - Modes: paper (simulate) / live (real Groww orders) / shadow (observe only)
+  - Bracket simulation with SL/TP monitoring
+  - Live mode: 30s confirmation delay + Groww SL-M orders
+  - Realistic brokerage: ₹20 flat + 0.1% STT
+  - MongoDB persistence in `robo_orders` collection
+- `trading_loop.py` — APScheduler autonomous scan loop
+  - Configurable 1–30 min interval
+  - Meta decision: DreamerV3 (60%) + Technical composite (40%)
+  - NSE market hours gate (09:15–15:30 IST, weekdays)
+  - EOD forced close at 15:15 IST
+  - Circuit breaker integration
+- 7 new API endpoints added to `robo_router.py`:
+  - POST `/api/robo/mode` — switch paper/live/shadow
+  - GET `/api/robo/positions` — open positions all modes
+  - GET `/api/robo/orders` — order history
+  - GET `/api/robo/loop-status` — APScheduler state
+  - POST `/api/robo/set-interval` — change scan interval
+  - POST `/api/robo/cancel-pending` — cancel PENDING live order
+  - POST `/api/robo/close-all` — emergency close all positions
+- `RoboDashboard.jsx` — Phase 3 panels added:
+  - Execution Mode Control (paper/shadow/live + live warning modal)
+  - Scan interval selector (1/5/10/15/30m)
+  - Trading Loop Status panel (cycle count, last/next scan, market hours)
+  - Open Positions table with close-all button
+  - Execution Order History table with P&L stats
+
 ### DreamerV3 RL Agent Replacement (✅ done — Jun 2026)
 - Replaced PPO/SAC (stable-baselines3) with DreamerV3 World Model RL
 - Architecture: RSSM (prior+posterior), Actor-Critic on imagined H-step trajectories, ReplayBuffer
