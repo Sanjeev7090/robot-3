@@ -19,7 +19,7 @@ import sys
 from datetime import datetime
 
 # Backend URL from frontend/.env
-BASE_URL = "https://84fd6ad5-9175-43f0-87a4-2de35dbeef79.preview.emergentagent.com"
+BASE_URL = "https://mirofish-swarm.preview.emergentagent.com"
 API_URL = f"{BASE_URL}/api"
 
 class Colors:
