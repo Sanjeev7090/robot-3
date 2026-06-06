@@ -346,6 +346,18 @@ class TradingLoop:
                     _state["daily_target_pct"] = (
                         _state["daily_pnl"] / target * 100 if target > 0 else 0.0
                     )
+                # Phase 5: Telegram notification for closed trade
+                try:
+                    from agents.telegram_notifier import notify_trade_closed, notify_daily_target_reached
+                    notify_trade_closed(cp)
+                    # Check if daily target reached
+                    with _lock:
+                        dpnl_now = _state.get("daily_pnl", 0.0)
+                        tgt_now  = _state.get("daily_profit_target") or prefs.daily_profit_target
+                    if dpnl_now >= tgt_now > 0:
+                        notify_daily_target_reached(dpnl_now, tgt_now)
+                except Exception:
+                    pass
                 logger.info("[TradingLoop][%s] Position closed | P&L=₹%.2f | reason=%s",
                             cycle_id, pnl, cp.get("exit_reason", "?"))
 
@@ -358,6 +370,12 @@ class TradingLoop:
                 _upd(circuit_breaker=True, circuit_reason=reason,
                      status="circuit_breaker", auto_mode=False, open_trade=None)
                 logger.warning("[TradingLoop][%s] CIRCUIT BREAKER: %s", cycle_id, reason)
+                # Phase 5: Telegram alert
+                try:
+                    from agents.telegram_notifier import notify_circuit_breaker
+                    notify_circuit_breaker(reason)
+                except Exception:
+                    pass
                 self.stop()
                 self._update_state("last_cycle_status", "circuit_breaker")
                 return
@@ -444,6 +462,12 @@ class TradingLoop:
                         _state["daily_trades"] += 1
                         _state["open_trade"]    = placed_order
                         _state["status"]        = "trading"
+                    # Phase 5: Telegram notification
+                    try:
+                        from agents.telegram_notifier import notify_trade_opened
+                        notify_trade_opened(placed_order)
+                    except Exception:
+                        pass
                     logger.info(
                         "[TradingLoop][%s] ORDER PLACED | %s %s × %d @ ₹%.2f | "
                         "SL=₹%.2f TP=₹%.2f | conf=%.0f%%",

@@ -351,7 +351,7 @@ export default function RoboAdvisorDashboard({ selectedStock }) {
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h1 className="text-sm font-black text-white tracking-tight">Dreamer V3</h1>
+                <h1 className="text-sm font-black text-white tracking-tight">Robot 3.O</h1>
                 <span className="text-[9px] text-zinc-500 font-mono">Robo-Advisor</span>
               </div>
               <div className="flex items-center gap-2">

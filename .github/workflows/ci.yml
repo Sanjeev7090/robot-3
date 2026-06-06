@@ -1,0 +1,137 @@
+name: Dreamer V3 Robo-Trader CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION:   "20"
+
+jobs:
+  # ─── Backend Tests ──────────────────────────────────────────────────────────
+  backend-tests:
+    name: Backend Unit Tests
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:  ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies (CPU-only PyTorch)
+        working-directory: ./backend
+        run: |
+          pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt \
+            --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Run unit tests
+        working-directory: ./backend
+        env:
+          MONGO_URL: mongodb://localhost:27017
+          DB_NAME:   trading_db_test
+          ENV:       testing
+        run: |
+          pytest tests/test_risk_portfolio_manager.py \
+                 tests/test_execution_engine.py \
+                 tests/test_trading_loop.py \
+                 -v --tb=short --timeout=60 -x
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: backend/test-results/
+
+  # ─── Backend Lint ───────────────────────────────────────────────────────────
+  backend-lint:
+    name: Backend Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install ruff
+      - run: ruff check backend/agents/ backend/middleware/ --select=E,F,W --ignore=E501
+
+  # ─── Frontend Tests ─────────────────────────────────────────────────────────
+  frontend-build:
+    name: Frontend Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: yarn install --frozen-lockfile
+
+      - name: Build
+        working-directory: ./frontend
+        env:
+          REACT_APP_BACKEND_URL: http://localhost:8001
+          CI: false               # Don't fail on warnings
+        run: yarn build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/build/
+          retention-days: 3
+
+  # ─── Docker Build Check ─────────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build Validation
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-build]
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.backend
+          push: false
+          tags: robo-trader-backend:ci
+
+      - name: Build frontend image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.frontend
+          push: false
+          tags: robo-trader-frontend:ci
+          build-args: |
+            REACT_APP_BACKEND_URL=http://localhost:8001

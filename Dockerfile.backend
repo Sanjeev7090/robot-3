@@ -1,0 +1,46 @@
+# ─── Backend Dockerfile ──────────────────────────────────────────────────────
+# Dreamer V3 Robo-Trader — Backend (FastAPI + Python 3.11)
+# CPU-only (no CUDA). PyTorch 2.12.0+cpu pinned.
+#
+# Build: docker build -f Dockerfile.backend -t robo-trader-backend .
+# Run:   docker run -p 8001:8001 --env-file backend/.env robo-trader-backend
+
+FROM python:3.11-slim
+
+# System deps: build tools + ta-lib requirements
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    libffi-dev \
+    libssl-dev \
+    curl \
+    wget \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/backend
+
+# Install Python deps (layer-cached)
+COPY backend/requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt \
+    --extra-index-url https://download.pytorch.org/whl/cpu
+
+# Copy backend source
+COPY backend/ .
+
+# Non-root user for security
+RUN adduser --disabled-password --gecos '' appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
+EXPOSE 8001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8001/api/health || exit 1
+
+# Start FastAPI
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "2"]

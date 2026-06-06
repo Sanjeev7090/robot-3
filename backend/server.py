@@ -30,7 +30,11 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-app = FastAPI()
+app = FastAPI(
+    title       = "Dreamer V3 Robo-Trader API",
+    description = "Institutional-grade autonomous trading engine. PAPER TRADING DEFAULT. No guaranteed returns.",
+    version     = "3.0.0",
+)
 api_router = APIRouter(prefix="/api")
 
 cache_storage = {}
@@ -10459,11 +10463,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Phase 5: Production middleware (rate limiting, security headers, logging) ──
+try:
+    from middleware.production import add_production_middleware, setup_structured_logging, get_metrics_text
+    setup_structured_logging(os.environ.get("LOG_LEVEL", "INFO"))
+    add_production_middleware(app)
+except Exception as _mw_err:
+    logging.warning(f"Production middleware not loaded: {_mw_err}")
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# ── Phase 5: Health + Metrics endpoints ───────────────────────────────────────
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint for Docker/k8s liveness probes."""
+    from datetime import datetime, timezone
+    return {
+        "status":    "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version":   "3.0.0",
+        "disclaimer": "PAPER TRADING DEFAULT — No guaranteed returns.",
+    }
+
+@app.get("/api/metrics")
+async def prometheus_metrics():
+    """Prometheus metrics endpoint (enable via PROMETHEUS_ENABLED=true in .env)."""
+    try:
+        from middleware.production import get_metrics_text
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(get_metrics_text(), media_type="text/plain")
+    except Exception as e:
+        return {"error": str(e)}
+
+# ── Phase 5: Telegram test endpoint ───────────────────────────────────────────
+@app.post("/api/robo/test-telegram")
+async def test_telegram():
+    """Send a Telegram test notification to verify bot config."""
+    try:
+        from agents.telegram_notifier import send_test_message, _ENABLED
+        if not _ENABLED:
+            return {"success": False, "message": "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in .env"}
+        sent = send_test_message()
+        return {"success": sent, "message": "Test message sent" if sent else "Not configured"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
