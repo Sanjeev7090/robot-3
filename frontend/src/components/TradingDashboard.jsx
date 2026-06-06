@@ -12,7 +12,6 @@ import ExplosiveVolumeAnalysis from './ExplosiveVolumeAnalysis';
 import GoldenSetupAnalysis from './GoldenSetupAnalysis';
 import AIIndicatorScore from './AIIndicatorScore';
 import GodzillaSetupAnalysis from './GodzillaSetupAnalysis';
-import DemonAnalysis from './DemonAnalysis';
 import GhostModeScanner from './GhostModeScanner';
 import Watchlist from './Watchlist';
 import PortfolioTracker from './PortfolioTracker';
@@ -746,7 +745,6 @@ const TradingDashboard = () => {
                     <GoldenSetupAnalysis stockData={stockData} selectedStock={selectedStock} onAnalysisComplete={handleStrategyAnalysis} />
                     <AIIndicatorScore stockData={stockData} selectedStock={selectedStock} onAnalysisComplete={handleStrategyAnalysis} />
                     <GodzillaSetupAnalysis stockData={stockData} selectedStock={selectedStock} onAnalysisComplete={handleStrategyAnalysis} />
-                    <DemonAnalysis stockData={stockData} selectedStock={selectedStock} onAnalysisComplete={handleStrategyAnalysis} />
                     <NarrativeSwingAnalysis stockData={stockData} selectedStock={selectedStock} onAnalysisComplete={handleStrategyAnalysis} />
                     <HybridVWAPAnalysis stockData={stockData} selectedStock={selectedStock} onAnalysisComplete={handleStrategyAnalysis} />
                   </>

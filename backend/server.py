@@ -5386,79 +5386,9 @@ def run_demon_on_bars(bars):
     }
 
 
-@api_router.post("/demon/analyze", response_model=DemonResponse)
-async def analyze_demon(request: DemonRequest):
-    """DEMON - Multi-Strategy Confluence Analyzer"""
-    try:
-        bars = request.bars
-        if len(bars) < 30:
-            raise HTTPException(status_code=400, detail="Need at least 30 bars")
-
-        result = run_demon_on_bars(bars)
-        if result is None:
-            raise HTTPException(status_code=400, detail="Insufficient bar data")
-
-        closes  = [b['close'] for b in bars]
-        current = closes[-1]
-        strategies = result["strategy_signals"]
-        buy_names  = [s["name"] for s in strategies.values() if s["signal"] == "BUY"]
-        sell_names = [s["name"] for s in strategies.values() if s["signal"] == "SELL"]
-        buy_count  = result["buy_count"]
-        sell_count = result["sell_count"]
-        total      = result["total_strategies"]
-        verdict    = result["verdict"]
-        signal_type= result["signal_type"]
-        confidence = result["confidence"]
-
-        confluence = []
-        if signal_type != "WAIT":
-            aligned = buy_names if signal_type == "BUY" else sell_names
-            cnt     = buy_count  if signal_type == "BUY" else sell_count
-            confluence.append(f"{cnt}/{total} strategies say {signal_type}")
-            confluence.append(f"Agreeing: {', '.join(aligned)}")
-        else:
-            confluence.append(f"BUY: {buy_count}, SELL: {sell_count}")
-
-        sl_str = result.get("stop_loss")
-        t_list = result.get("targets") or []
-        t1_val = float(t_list[0]) if t_list else None
-        t2_val = float(t_list[1]) if len(t_list) > 1 else None
-        t3_val = float(t_list[2]) if len(t_list) > 2 else None
-
-        if signal_type == "BUY":
-            rec = (f"{verdict}! {buy_count}/{total} strategies confirm LONG. "
-                   f"Confluence: {', '.join(buy_names)}. "
-                   f"Weighted confidence {confidence:.0f}%. "
-                   f"Entry ₹{current:.2f}. SL ₹{sl_str}. T1 ₹{t1_val}.")
-        elif signal_type == "SELL":
-            rec = (f"{verdict}! {sell_count}/{total} strategies confirm SHORT. "
-                   f"Confluence: {', '.join(sell_names)}. "
-                   f"Weighted confidence {confidence:.0f}%. "
-                   f"Entry ₹{current:.2f}. SL ₹{sl_str}. T1 ₹{t1_val}.")
-        else:
-            rec = (f"No DEMON confluence. {buy_count} BUY vs {sell_count} SELL. "
-                   f"Wait for strategy agreement.")
-
-        return DemonResponse(
-            verdict=verdict,
-            signal_type=signal_type,
-            confidence=confidence,
-            buy_count=buy_count,
-            sell_count=sell_count,
-            wait_count=total - buy_count - sell_count,
-            total_strategies=total,
-            strategy_signals=strategies,
-            entry_price=f"{current:.2f}" if signal_type != "WAIT" else None,
-            stop_loss=sl_str,
-            targets=t_list if t_list else None,
-            confluence_details=confluence,
-            recommendation=rec,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error in demon analysis: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# NOTE: /demon/analyze endpoint has been removed (deprecated).
+# The internal run_demon_on_bars() helper is retained because it is still used
+# by the auto-scanner and ghost-mode scanner for multi-strategy confluence.
 
 
 # ============================================================
