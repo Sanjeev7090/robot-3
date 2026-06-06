@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Dark/Light mode + Mobile responsive improvements for the GANN TRADER app (cloned from https://github.com/Sanjeev7090/26may-trading-)"
+user_problem_statement: "Upgrade existing GANN TRADER repo (FastAPI + React 19 frontend) into a World Top 1% Institutional-Grade Fully Autonomous Robo-Trader using Dreamer V3 as core policy learner. User can set daily profit target + allocated capital; system auto-calculates risk profile, position sizing, feasibility. Auto Mode enables continuous DreamerV3-powered paper trading toward the daily target with capital protection."
 
 backend:
   - task: "Backend server running with all dependencies"
@@ -115,7 +115,100 @@ backend:
     status_history:
       - working: true
         agent: "main"
-        comment: "Backend successfully cloned and running on port 8001. FastAPI server with 16+ analysis endpoints. Dependencies installed (yfinance, nsepython, emergentintegrations, growwapi, curl_cffi). MongoDB connection configured. All core packages imported successfully."
+        comment: "Backend successfully running on port 8001. FastAPI server with 16+ analysis endpoints. Dependencies installed. MongoDB connection configured. CPU-only torch installed (was failing with CUDA libs)."
+
+  - task: "Dreamer V3 Robo-Orchestrator"
+    implemented: true
+    working: true
+    file: "backend/agents/dreamer_robo_orchestrator.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Full orchestrator built: UserPreferences model (daily_target, allocated_capital), RiskProfile dynamic calculator (VaR, position sizing, feasibility scoring with 6 tiers), DreamerV3 decision bridge, paper trading engine, circuit breakers (max daily loss, 5% drawdown, consecutive losses), background auto-mode worker, MongoDB persistence. Reward function incorporates daily target progress + Calmar + Sharpe + capital protection."
+
+  - task: "Robo Trader API Endpoints"
+    implemented: true
+    working: true
+    file: "backend/agents/robo_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "FastAPI router added at /api/robo/*. Endpoints: GET/POST /settings, GET /status, POST /start, POST /stop, POST /reset-daily, GET /decision, GET /audit, POST /risk-preview. All endpoints tested and working. Market context (price, ATR, regime, RSI) fetched from yfinance."
+
+  - task: "Trading Strategy Endpoints (12 strategies)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "All 12 strategy endpoints operational."
+
+frontend:
+  - task: "Robo Dashboard UI"
+    implemented: true
+    working: true
+    file: "frontend/src/components/RoboDashboard.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Full RoboDashboard.jsx built: Settings panel (daily target + capital + quick buttons), Feasibility SVG gauge, Daily P&L progress bar, Risk profile stats grid (8 KPIs), Auto Mode toggle with circuit breaker, DreamerV3 decision feed, Open position tracker, Strategy weights bar chart, Paper trade audit log. Settings modal with risk preview functionality. All API calls working. Feasibility tiers color-coded. PAPER TRADING ONLY disclaimer prominent."
+
+  - task: "Robo Tab in TradingDashboard"
+    implemented: true
+    working: true
+    file: "frontend/src/components/TradingDashboard.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added '🤖 ROBO' tab to rightTabs array. Imported RoboDashboard. Tab renders correctly. Frontend .env created with REACT_APP_BACKEND_URL (was missing, causing runtime error)."
+
+  - task: "Main Trading Dashboard"
+    implemented: true
+    working: true
+    file: "frontend/src/components/TradingDashboard.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Main dashboard working. Fixed missing frontend .env file which was causing 'Cannot read properties of undefined (reading replace)' runtime error."
+
+metadata:
+  created_by: "main_agent"
+  version: "2.0"
+  test_sequence: 1
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Robo Dashboard loads and shows risk profile correctly"
+    - "Settings modal preview works"
+    - "Auto mode start/stop works"
+    - "API endpoints all respond correctly"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Built Phase 1 of the Dreamer V3 Robo-Trader system: (1) Backend orchestrator (dreamer_robo_orchestrator.py) with UserPreferences, RiskProfile, paper trading engine, circuit breakers, auto-mode worker loop, reward function. (2) FastAPI router (robo_router.py) with 8 endpoints. (3) Frontend RoboDashboard.jsx with full settings panel, feasibility gauge, progress bar, DreamerV3 decision feed. (4) Added '🤖 ROBO' tab in TradingDashboard. Also fixed: CPU-only torch installation, frontend .env creation, market context RSI Series-to-float bug. All endpoints tested and working."
 
   - task: "Trading Strategy Endpoints (12 strategies)"
     implemented: true

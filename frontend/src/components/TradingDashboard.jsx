@@ -32,6 +32,7 @@ import RegulatoryWatchdogPanel from './RegulatoryWatchdogPanel';
 import NarrativeSwingAnalysis from './NarrativeSwingAnalysis';
 import HybridVWAPAnalysis from './HybridVWAPAnalysis';
 import RLAgentPanel from './RLAgentPanel';
+import RoboDashboard from './RoboDashboard';
 import EnsembleCockpitPanel from './EnsembleCockpitPanel';
 import SectorRotationPicker from './SectorRotationPicker';
 import MoneycontrolMovers from './MoneycontrolMovers';
@@ -442,6 +443,7 @@ const TradingDashboard = () => {
     { id: 'strategies', label: 'STRATEGIES'  },
     { id: 'paper',      label: 'PAPER'       },
     { id: 'rlagent',    label: 'RL AGENT'    },
+    { id: 'robo',       label: '🤖 ROBO'     },
     { id: 'ensemble',   label: 'AI ASSEMBLE' },
     { id: 'picker',     label: 'PICKER'      },
     { id: 'pece',       label: 'PE-CE OI'    },
@@ -769,6 +771,10 @@ const TradingDashboard = () => {
 
             {activeTab === 'rlagent' && (
               <RLAgentPanel selectedStock={selectedStock} />
+            )}
+
+            {activeTab === 'robo' && (
+              <RoboDashboard selectedStock={selectedStock} />
             )}
 
             {activeTab === 'ensemble' && (

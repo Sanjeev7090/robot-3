@@ -11410,6 +11410,10 @@ async def get_options_network(symbol: str):
 from rl_agent.rl_router import rl_router
 app.include_router(rl_router)
 
+# ======================= DREAMER V3 ROBO-TRADER =======================
+from agents.robo_router import robo_router
+app.include_router(robo_router)
+
 # ======================= KRONOS FORECAST =======================
 from kronos_router import kronos_router
 app.include_router(kronos_router)
@@ -11541,3 +11545,10 @@ async def startup_binance_ws():
     asyncio.create_task(_hybrid_non_crypto_simulator())
     asyncio.create_task(_hybrid_indian_yfinance_poller())
     logging.info("Kraken + QSC Hybrid + Indian yfinance background tasks started")
+    # Load Robo-Trader preferences from DB
+    try:
+        from agents.dreamer_robo_orchestrator import load_preferences_from_db
+        asyncio.create_task(load_preferences_from_db())
+        logging.info("Robo-Trader preferences load task scheduled")
+    except Exception as _re:
+        logging.warning(f"Robo-Trader preferences load failed: {_re}")
