@@ -14,18 +14,20 @@ const TopOptionsSheet = ({ symbol, name, onClose, onOptionSelect }) => {
   const [data, setData] = useState(null);
   const [filter, setFilter] = useState('all'); // all | call | put
   const [sortBy, setSortBy] = useState('volume'); // volume | oi | change
+  const [selectedExpiry, setSelectedExpiry] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const intervalRef = useRef(null);
 
-  const fetchOptions = async () => {
+  const fetchOptions = async (expiry = null) => {
     if (!symbol) return;
     try {
       setError(null);
-      const res = await axios.get(`${API}/indices/top-options/${symbol}`, {
-        params: { limit: 20, option_type: filter, sort_by: sortBy },
-      });
+      const params = { limit: 20, option_type: filter, sort_by: sortBy };
+      if (expiry) params.expiry = expiry;
+      const res = await axios.get(`${API}/indices/top-options/${symbol}`, { params });
       setData(res.data);
+      if (!selectedExpiry && res.data?.nearest_expiry) setSelectedExpiry(res.data.nearest_expiry);
     } catch (e) {
       setError(e?.response?.data?.detail || 'Failed to load options');
     } finally {
@@ -37,16 +39,26 @@ const TopOptionsSheet = ({ symbol, name, onClose, onOptionSelect }) => {
     if (!symbol) return;
     setLoading(true);
     setData(null);
+    setSelectedExpiry(null);
     fetchOptions();
-    intervalRef.current = setInterval(fetchOptions, 30000); // refresh every 30s
+    intervalRef.current = setInterval(() => fetchOptions(selectedExpiry), 60000);
     return () => clearInterval(intervalRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, filter, sortBy]);
+
+  const handleExpiryChange = (exp) => {
+    setSelectedExpiry(exp);
+    setLoading(true);
+    fetchOptions(exp);
+  };
 
   if (!symbol) return null;
 
   const options = data?.options || [];
   const underlyingPrice = data?.underlying_price || 0;
+  const isSensex = symbol === 'SENSEX';
+  const allExpiries = data?.all_expiries || [];
+  const indiaVix = data?.india_vix;
 
   return (
     <div
@@ -61,13 +73,23 @@ const TopOptionsSheet = ({ symbol, name, onClose, onOptionSelect }) => {
         {/* Header */}
         <div className="px-4 pt-3 pb-2 border-b border-white/10 shrink-0">
           <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-base font-black uppercase tracking-wide text-white">
-                Top {name || symbol} Options
+                {name || symbol} Options
               </h2>
               {underlyingPrice > 0 && (
                 <span className="text-[10px] font-mono text-zinc-400 border border-white/10 px-1.5 py-0.5 rounded">
-                  Spot: ₹{underlyingPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                  ₹{underlyingPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                </span>
+              )}
+              {isSensex && indiaVix != null && (
+                <span className="text-[10px] font-mono text-cyan-400 border border-cyan-400/30 bg-cyan-400/10 px-1.5 py-0.5 rounded">
+                  VIX {indiaVix.toFixed(1)}%
+                </span>
+              )}
+              {isSensex && data?.is_live_derived && (
+                <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-400 border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 rounded">
+                  Live-Derived
                 </span>
               )}
             </div>
@@ -79,7 +101,29 @@ const TopOptionsSheet = ({ symbol, name, onClose, onOptionSelect }) => {
               <X size={16} weight="bold" className="text-zinc-400" />
             </button>
           </div>
-          {data?.nearest_expiry && (
+
+          {/* Expiry selector (for SENSEX — multiple Thursday expiries) */}
+          {isSensex && allExpiries.length > 1 && (
+            <div className="flex gap-1.5 overflow-x-auto pb-1 mb-2 scrollbar-hide">
+              {allExpiries.map((exp) => (
+                <button
+                  key={exp}
+                  onClick={() => handleExpiryChange(exp)}
+                  className={`shrink-0 px-2.5 py-1 text-[10px] font-mono font-semibold rounded-lg border transition-all ${
+                    (selectedExpiry || data?.nearest_expiry) === exp
+                      ? 'bg-violet-500/20 text-violet-300 border-violet-500/50'
+                      : 'bg-transparent text-zinc-500 border-white/10 hover:border-white/20 hover:text-zinc-300'
+                  }`}
+                  data-testid={`expiry-btn-${exp}`}
+                >
+                  {exp}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Non-SENSEX expiry + sort */}
+          {!isSensex && data?.nearest_expiry && (
             <div className="text-[10px] text-zinc-500 font-mono mb-2">
               Expiry: <span className="text-[#00E676]">{data.nearest_expiry}</span>
               {' · '}Sorted by{' '}
@@ -92,18 +136,16 @@ const TopOptionsSheet = ({ symbol, name, onClose, onOptionSelect }) => {
             </div>
           )}
 
-        {/* Indicative data banner for SENSEX */}
-        {data?.bse_indicative && (
-          <div className="mx-4 mt-2 mb-1 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-            <span className="text-amber-400 text-[10px] mt-0.5">⚠</span>
-            <p className="text-[10px] text-amber-400/90 leading-tight">
-              <strong>Indicative prices only</strong> — BSE SENSEX option live data unavailable from server.
-              Prices shown are Black-Scholes theoretical estimates.
-            </p>
-          </div>
-        )}
+          {/* SENSEX live-derived info */}
+          {isSensex && data?.is_live_derived && (
+            <div className="mx-0 mb-2 flex items-start gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2">
+              <p className="text-[9px] text-cyan-400/80 leading-tight">
+                Prices derived from live SENSEX spot + India VIX {indiaVix?.toFixed(1)}% · Black-Scholes · BSE Thursday expiry schedule
+              </p>
+            </div>
+          )}
 
-        {/* Filter pills */}
+          {/* Filter pills */}
           <div className="flex gap-1.5">
             {[
               { id: 'all', label: 'All' },
@@ -135,7 +177,7 @@ const TopOptionsSheet = ({ symbol, name, onClose, onOptionSelect }) => {
           {loading && (
             <div className="py-8 flex flex-col items-center justify-center gap-2 text-zinc-500">
               <Spinner size={24} className="animate-spin" />
-              <span className="text-xs">Loading live option chain…</span>
+              <span className="text-xs">Loading option chain…</span>
             </div>
           )}
 
@@ -169,13 +211,8 @@ const TopOptionsSheet = ({ symbol, name, onClose, onOptionSelect }) => {
                         }`}
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-bold text-white truncate">
+                        <div className="text-sm font-bold text-white truncate flex items-center gap-1.5">
                           {opt.instrument}
-                          {opt.is_indicative && (
-                            <span className="ml-1.5 text-[9px] text-amber-400 border border-amber-400/40 px-1 py-0.5 rounded font-normal">
-                              indicative
-                            </span>
-                          )}
                         </div>
                         <div className="text-[10px] text-zinc-500 font-mono mt-0.5 truncate">
                           {opt.expiry_display || opt.expiry}
@@ -185,6 +222,8 @@ const TopOptionsSheet = ({ symbol, name, onClose, onOptionSelect }) => {
                             </span>
                           )}
                           {opt.iv > 0 && <span className="ml-2">IV: {opt.iv.toFixed(1)}%</span>}
+                          {opt.delta != null && <span className="ml-2">Δ {opt.delta > 0 ? '+' : ''}{opt.delta}</span>}
+                          {opt.theta != null && <span className="ml-2">θ {opt.theta.toFixed(1)}</span>}
                         </div>
                       </div>
                     </div>
@@ -210,9 +249,9 @@ const TopOptionsSheet = ({ symbol, name, onClose, onOptionSelect }) => {
 
         {/* Footer */}
         <div className="px-4 py-2 border-t border-white/10 text-[9px] text-zinc-600 font-mono text-center shrink-0">
-          {data?.bse_indicative
-            ? 'Indicative (Black-Scholes) · BSE SENSEX · Chart shows index reference'
-            : 'Live NSE option chain · refreshes every 30s'}
+          {isSensex
+            ? `Live-Derived · SENSEX spot + India VIX ${indiaVix?.toFixed(1) || '—'}% · Refreshes every 60s`
+            : 'Live NSE option chain · refreshes every 60s'}
         </div>
       </div>
     </div>

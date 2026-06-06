@@ -302,7 +302,20 @@ In production (proper egress): NSEDirect/NSEPython will be primary.
 - Fully dark/light-mode aware via `.dark` and `html:not(.dark)` selectors
 - Files: `frontend/src/index.css` (CSS classes), `TradingDashboard.jsx` (class applied)
 
-## Session: Stock Search Integration in Robo Tab (Feb 2026)
+## Session: SENSEX Options Live-Derived + Kronos Auto-Warmup (Feb 2026)
+- **SENSEX options upgrade** (`server.py` ~L1393):
+  - `_fetch_live_india_vix()`: Live India VIX from NSE allIndices API
+  - `_sensex_expiry_dates()`: Proper BSE Thursday expiry schedule (post-Sep-2025)
+  - `_fetch_sensex_live_options()`: IV skew, Delta/Theta Greeks, 100-pt strikes, ±15 ATM range
+  - API returns `india_vix`, `is_live_derived=True`, 6 expiry dates (4 weekly + 2 monthly)
+- **TopOptionsSheet.jsx upgrade**:
+  - India VIX badge, "Live-Derived" badge, expiry switcher (Thursday buttons)
+  - Delta/Theta shown in option rows, 60s refresh
+- **Kronos auto-warmup** (`KronosForecastPanel.jsx`): 
+  - Auto-triggers `POST /kronos/warmup` when `modelStatus.loaded=false` before forecast
+  - Also handles 503 responses with auto-retry warmup
+
+
 - **Primary Ticker search** (`TargetCapitalSettings.jsx`): Plain input → stock autocomplete with `/api/stock/search`, dropdown shows ticker+name+exchange badge; selecting a stock also loads it in chart
 - **TOP PICKS → Chart load** (`AgentDiscussionPanel.jsx`): Clicking any TOP PICK now calls `onSelectStock` (searches ticker, gets full stock object, loads in chart) + triggers analysis scan
 - **Chart stock → Primary Ticker sync**: Already working via `RoboAdvisorDashboard`'s `useEffect` that syncs `selectedStock.ticker → settings.ticker`
