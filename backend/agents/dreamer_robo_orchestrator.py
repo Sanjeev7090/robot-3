@@ -51,6 +51,15 @@ from uuid import uuid4
 import numpy as np
 from motor.motor_asyncio import AsyncIOMotorClient
 
+# ─── Phase 2: Import Risk Portfolio Manager ───────────────────────────────────
+from .risk_portfolio_manager import (
+    rpm as _rpm,
+    compute_rpm_reward,
+    compute_dynamic_risk_budget,
+    check_feasibility,
+    RiskPortfolioManager,
+)
+
 logger = logging.getLogger(__name__)
 
 # ─── MongoDB setup (uses same env vars as server.py) ─────────────────────────
@@ -369,14 +378,61 @@ def get_robo_state() -> Dict:
         return dict(_state)
 
 
-# ─── Risk Recalculation ───────────────────────────────────────────────────────
+# ─── Risk Recalculation — delegates to RPM ────────────────────────────────────
 
 def _recalculate_risk(prefs: UserPreferences, market_atr_pct: float = 0.015) -> RiskProfile:
     """
     Recompute full risk profile whenever user changes settings or market vol changes.
-    market_atr_pct: daily ATR as fraction of price (default 1.5% = typical NSE large-cap)
+    Phase 2: delegates to RiskPortfolioManager for Kelly + VaR + Feasibility.
     """
     return RiskProfile(prefs, market_atr_pct)
+
+
+def _recalculate_risk_full(
+    trigger: str = "scheduled",
+    current_pnl: float = 0.0,
+    trades_today: int = 0,
+) -> Dict:
+    """
+    Phase 2 full recalculation via RPM — returns the complete risk profile dict
+    (position size, VaR, feasibility, dynamic budget, portfolio heat).
+    Syncs RPM settings from _prefs before calculating.
+    """
+    # Sync RPM with current prefs
+    with _lock:
+        prefs = _prefs
+
+    _rpm.update_settings(
+        daily_target      = prefs.daily_profit_target,
+        allocated_capital = prefs.allocated_capital,
+        risk_tolerance    = prefs.risk_tolerance,
+        ticker            = prefs.ticker,
+        mode              = _state.get("mode", "paper"),
+    )
+
+    # Compute session progress (NSE: 09:15 – 15:30 IST)
+    now_ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    session_start = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
+    session_end   = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
+    total_secs = max((session_end - session_start).total_seconds(), 1)
+    elapsed    = (now_ist - session_start).total_seconds()
+    session_progress = float(np.clip(elapsed / total_secs, 0.0, 1.0))
+
+    risk_profile = _rpm.full_recalculate(
+        trigger          = trigger,
+        current_pnl      = current_pnl,
+        trades_today     = trades_today,
+        session_progress = session_progress,
+    )
+
+    logger.info(
+        "[Orchestrator] Risk recalculated | %s | size=₹%.0f | heat=%.1f%% | budget=%s",
+        risk_profile.get("feasibility_label", "?"),
+        risk_profile.get("position_size_inr", 0),
+        risk_profile.get("portfolio_heat_pct", 0),
+        risk_profile.get("risk_budget_state", "?"),
+    )
+    return risk_profile
 
 
 def compute_robo_reward(
@@ -389,59 +445,27 @@ def compute_robo_reward(
     consecutive_losses: int,
     sharpe_rolling: float = 0.0,
     calmar_rolling: float = 0.0,
+    position_size_inr: float = 0.0,
 ) -> float:
     """
-    Reward function for DreamerV3 imagination rollouts — incorporates user-defined daily target
-    so the world model learns to optimize toward it while protecting capital.
+    Phase 2 reward function — delegates to RPM's enhanced compute_rpm_reward().
+    Uses capital state from RPM for normalisation.
 
-    Components:
-      1. Daily-target progress bonus:   positive when moving toward target
-      2. Capital protection bonus:       reward for small drawdowns
-      3. Rolling Sharpe component:       bounded via tanh
-      4. Rolling Calmar component:       bounded via tanh
-      5. Drawdown excess penalty:        convex once past threshold
-      6. Transaction cost penalty:       discourages overtrading
-      7. Consecutive-loss dampener:      reduce reward when on losing streak
+    Backwards-compatible signature (extra `position_size_inr` kwarg added).
+    Returns scalar reward clipped to [-3, +3].
     """
-    # 1. Daily-target progress
-    if daily_target > 0:
-        progress_frac = daily_pnl / daily_target      # could be negative
-        target_bonus  = float(np.tanh(progress_frac)) * TARGET_PROGRESS_WEIGHT
-    else:
-        target_bonus = 0.0
-
-    # 2. Capital protection bonus (small drawdowns get bonus)
-    cap_prot = (1.0 - drawdown) * CAPITAL_PROT_BONUS if drawdown < 0.02 else 0.0
-
-    # 3. Sharpe & Calmar
-    sharpe_term = float(np.tanh(sharpe_rolling)) * SHARPE_WEIGHT
-    calmar_term = float(np.tanh(calmar_rolling)) * CALMAR_WEIGHT
-
-    # 4. Drawdown penalty
-    dd_thresh = 0.02
-    if drawdown > dd_thresh:
-        excess = drawdown - dd_thresh
-        dd_pen = (excess ** 1.5) * DD_PENALTY_FACTOR
-    else:
-        dd_pen = 0.0
-
-    # 5. Step return (core PnL signal)
-    pnl_term = step_return_pct * 100.0  # scale %→reward
-
-    # 6. Transaction cost
-    cost_pen = transaction_cost * COST_WEIGHT
-
-    # 7. Consecutive loss dampener
-    if consecutive_losses >= CONSEC_LOSS_THRESHOLD:
-        loss_damp = 0.5  # half the reward when on a losing streak
-    else:
-        loss_damp = 1.0
-
-    total = loss_damp * (
-        pnl_term + target_bonus + cap_prot + sharpe_term + calmar_term
-        - dd_pen - cost_pen
+    reward, breakdown = _rpm.dreamer_reward_signal(
+        step_return_pct      = step_return_pct,
+        daily_pnl            = daily_pnl,
+        drawdown_frac        = drawdown,
+        transaction_cost_inr = transaction_cost * allocated_capital,  # convert to ₹
+        consecutive_losses   = consecutive_losses,
+        position_size_inr    = position_size_inr,
+        sharpe_rolling       = sharpe_rolling,
+        calmar_rolling       = calmar_rolling,
     )
-    return float(np.clip(total, -3.0, 3.0))
+    logger.debug("[Reward] %.4f | breakdown=%s", reward, breakdown)
+    return reward
 
 
 # ─── Market Intelligence Layer ────────────────────────────────────────────────
@@ -820,8 +844,10 @@ def _robo_worker(prefs: UserPreferences):
     logger.info("[RoboOrchestrator] Auto-mode started | target=₹%.0f | capital=₹%.0f",
                 prefs.daily_profit_target, prefs.allocated_capital)
 
-    risk = _recalculate_risk(prefs)
-    _upd(risk_profile = risk.to_dict())
+    # Phase 2: full RPM recalculation on start
+    risk_profile = _recalculate_risk_full(trigger="auto_start")
+    risk = _recalculate_risk(prefs)   # backward-compat RiskProfile object
+    _upd(risk_profile = risk_profile)
 
     iteration = 0
 
@@ -923,10 +949,38 @@ def _robo_worker(prefs: UserPreferences):
 
             # ── 7. Recalculate risk every 10 iterations (market vol may change) ──
             if iteration % 10 == 0:
-                ctx = _fetch_market_context(prefs.ticker)
-                market_atr_pct = ctx.get("atr_pct", 0.015)
-                risk = _recalculate_risk(prefs, market_atr_pct)
-                _upd(risk_profile = risk.to_dict())
+                with _lock:
+                    daily_pnl_now  = _state.get("daily_pnl", 0.0)
+                    daily_tr_now   = _state.get("daily_trades", 0)
+                risk_profile = _recalculate_risk_full(
+                    trigger      = "scheduled",
+                    current_pnl  = daily_pnl_now,
+                    trades_today = daily_tr_now,
+                )
+                risk = _recalculate_risk(prefs)  # keep backward-compat object
+                _upd(risk_profile = risk_profile)
+
+                # Update capital state vector for DreamerV3
+                with _lock:
+                    open_val = (_state.get("open_trade") or {}).get("position_value", 0.0)
+                cap_state = _rpm.get_capital_state_vector(
+                    current_pnl         = daily_pnl_now,
+                    trades_today        = daily_tr_now,
+                    open_position_value = open_val,
+                )
+                _upd(capital_state_vector = cap_state)
+
+                # Check dynamic budget — stop if exhausted
+                budget = _rpm.last_risk_budget
+                if budget and budget.should_stop_trading:
+                    _upd(
+                        circuit_breaker = True,
+                        circuit_reason  = f"[DynamicBudget] {budget.stop_reason}",
+                        status          = "circuit_breaker",
+                        auto_mode       = False,
+                    )
+                    logger.warning("[Orchestrator] Dynamic budget stop: %s", budget.stop_reason)
+                    break
 
             # ── Sleep 60 seconds between iterations ──
             for _ in range(60):
@@ -953,11 +1007,12 @@ def update_user_preferences(
 ) -> Dict:
     """
     Update user-defined settings and immediately recalculate risk profile.
+    Phase 2: uses RPM for full Kelly + VaR + Feasibility recalculation.
     Can be called at any time (even during active auto mode).
     """
     global _prefs
 
-    # Update preferences
+    # Update prefs object
     if daily_profit_target is not None:
         _prefs.daily_profit_target = max(0.0, float(daily_profit_target))
     if allocated_capital is not None:
@@ -967,39 +1022,47 @@ def update_user_preferences(
     if risk_tolerance is not None:
         _prefs.risk_tolerance = str(risk_tolerance)
 
-    # Recalculate risk (use latest market ATR if available)
-    ctx  = {}
-    try:
-        ctx = _fetch_market_context(_prefs.ticker)
-    except Exception:
-        pass
-    market_atr_pct = ctx.get("atr_pct", 0.015)
-    risk = _recalculate_risk(_prefs, market_atr_pct)
+    # Phase 2: full RPM recalculation (fetches live market data for ATR)
+    risk_profile = _recalculate_risk_full(trigger="user_update")
 
     _upd(
         daily_profit_target = _prefs.daily_profit_target,
         allocated_capital   = _prefs.allocated_capital,
         ticker              = _prefs.ticker,
         risk_tolerance      = _prefs.risk_tolerance,
-        risk_profile        = risk.to_dict(),
-        current_capital     = _prefs.allocated_capital,  # reset capital to new allocation
+        risk_profile        = risk_profile,
+        current_capital     = _prefs.allocated_capital,
         peak_capital        = _prefs.allocated_capital,
     )
 
+    # Get simplified feasibility for the message
+    feasibility_label = risk_profile.get("feasibility_label", "Unknown")
+    req_ret   = risk_profile.get("required_daily_return_pct", 0)
+    pos_size  = risk_profile.get("position_size_inr", 0)
+    warnings  = risk_profile.get("feasibility_warnings", [])
+    var95     = risk_profile.get("var_95_inr", 0)
+
     logger.info(
-        "[RoboOrchestrator] Settings updated → target=₹%.0f | capital=₹%.0f | feasibility=%s",
-        _prefs.daily_profit_target, _prefs.allocated_capital, risk.feasibility_label,
+        "[Orchestrator] Prefs updated → target=₹%.0f | capital=₹%.0f | %s",
+        _prefs.daily_profit_target, _prefs.allocated_capital, feasibility_label,
     )
 
     return {
         "success":       True,
         "preferences":   _prefs.to_dict(),
-        "risk_profile":  risk.to_dict(),
-        "market_context": ctx,
+        "risk_profile":  risk_profile,
+        "market_context": _rpm.last_market_ctx,
+        "capital_state": _rpm.get_capital_state_vector(
+            current_pnl         = _state.get("daily_pnl", 0.0),
+            trades_today        = _state.get("daily_trades", 0),
+            open_position_value = _state.get("open_trade", {}).get("position_value", 0.0) if _state.get("open_trade") else 0.0,
+        ),
+        "warnings": warnings,
         "message": (
-            f"Settings updated. Feasibility: {risk.feasibility_label} | "
-            f"Daily return needed: {risk.required_daily_return_pct:.2f}% | "
-            f"Position size: ₹{risk.position_size_inr:,.0f}"
+            f"Settings updated. {feasibility_label} | "
+            f"Daily return needed: {req_ret:.2f}% | "
+            f"Position size: ₹{pos_size:,.0f} | "
+            f"VaR 95%: ₹{var95:,.0f}"
         ),
     }
 

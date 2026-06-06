@@ -129,7 +129,31 @@ backend:
         agent: "main"
         comment: "Full orchestrator built: UserPreferences model (daily_target, allocated_capital), RiskProfile dynamic calculator (VaR, position sizing, feasibility scoring with 6 tiers), DreamerV3 decision bridge, paper trading engine, circuit breakers (max daily loss, 5% drawdown, consecutive losses), background auto-mode worker, MongoDB persistence. Reward function incorporates daily target progress + Calmar + Sharpe + capital protection."
 
-  - task: "Robo Trader API Endpoints"
+  - task: "Phase 2 — Risk Portfolio Manager"
+    implemented: true
+    working: true
+    file: "backend/agents/risk_portfolio_manager.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Full production-grade risk engine: (1) Kelly Criterion half-Kelly position sizer (2) ATR+vol-regime combined sizing (3) Parametric VaR/CVaR at 95% and 99% (4) 6-tier feasibility checker with NSE historical context (5) Dynamic Risk Budget intra-day adjustment (6) Portfolio Heat monitor (7) Enhanced DreamerV3 reward function with 9 components (8) Capital State Vector for world model (9) MongoDB CRUD for settings + audit trail (10) All edge cases handled. Fixed Kelly ZeroDivisionError bug."
+
+  - task: "Phase 2 — Updated Orchestrator"
+    implemented: true
+    working: true
+    file: "backend/agents/dreamer_robo_orchestrator.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Orchestrator now delegates to RPM: full_recalculate() called on start/settings-update/every-10-iterations. Reward function delegates to rpm.dreamer_reward_signal(). Session progress (9:15–15:30 IST) computed for dynamic budget. Capital state vector exposed in state."
+
+  - task: "Phase 2 — Updated Router (13 endpoints)"
     implemented: true
     working: true
     file: "backend/agents/robo_router.py"
@@ -139,7 +163,19 @@ backend:
     status_history:
       - working: true
         agent: "main"
-        comment: "FastAPI router added at /api/robo/*. Endpoints: GET/POST /settings, GET /status, POST /start, POST /stop, POST /reset-daily, GET /decision, GET /audit, POST /risk-preview. All endpoints tested and working. Market context (price, ATR, regime, RSI) fetched from yfinance."
+        comment: "13 endpoints: GET/POST /settings, POST /recalculate, GET /status, POST /start/stop/reset-daily, GET /decision/audit, POST /risk-preview, GET /risk-report/recalc-history/capital-state. All returning full RPM output with capital_state_vector."
+
+  - task: "Phase 2 — Frontend RoboDashboard"
+    implemented: true
+    working: true
+    file: "frontend/src/components/RoboDashboard.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added Phase 2 sections: VaR/CVaR 4-quadrant analysis, Kelly Position Sizing with vol-regime badge, Dynamic Risk Budget state panel with Recalculate button, Feasibility Analysis with NSE historical exceedance + suggestion + warnings + alternative targets, DreamerV3 Capital State Vector bar chart, Preview modal updated with 12 risk metrics."
 
   - task: "Trading Strategy Endpoints (12 strategies)"
     implemented: true

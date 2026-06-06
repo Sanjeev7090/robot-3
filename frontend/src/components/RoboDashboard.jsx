@@ -161,6 +161,8 @@ export default function RoboDashboard({ selectedStock }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [recalcLoading, setRecalcLoading] = useState(false);
+  const [capitalState, setCapitalState] = useState(null);
 
   // Robo state
   const [roboState, setRoboState] = useState(null);
@@ -200,6 +202,7 @@ export default function RoboDashboard({ selectedStock }) {
           ticker:              stRes.data.ticker              || 'RELIANCE.NS',
           risk_tolerance:      stRes.data.risk_tolerance      || 'moderate',
         });
+        if (stRes.data.capital_state_vector) setCapitalState(stRes.data.capital_state_vector);
       }
     } catch (e) {
       /* silent */
@@ -254,6 +257,18 @@ export default function RoboDashboard({ selectedStock }) {
       setError('Save failed: ' + (e.response?.data?.detail || e.message));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRecalculate = async () => {
+    setRecalcLoading(true);
+    try {
+      await axios.post(`${API}/robo/recalculate`, { trigger: 'manual' });
+      await fetchState();
+    } catch (e) {
+      setError('Recalculate failed: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setRecalcLoading(false);
     }
   };
 
@@ -476,6 +491,224 @@ export default function RoboDashboard({ selectedStock }) {
               sub={`Peak: ${fmtInr(rs?.peak_capital)}`} icon="💎" />
           </div>
         </div>
+
+        {/* ── Phase 2: VaR / CVaR + Kelly + Dynamic Budget ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* VaR / CVaR */}
+          <div className="bg-zinc-900/80 border border-zinc-700/40 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold text-white">VaR / CVaR Analysis</h2>
+              <span className="text-[10px] text-zinc-500">Parametric Normal</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { label: 'VaR 95%',  value: fmtInr(rp.var_95_inr),  sub: fmtPct(rp.var_95_pct_of_capital) + ' of capital', color: '#f59e0b' },
+                { label: 'VaR 99%',  value: fmtInr(rp.var_99_inr),  sub: fmtPct(rp.var_99_pct_of_capital) + ' of capital', color: '#f97316' },
+                { label: 'CVaR 95%', value: fmtInr(rp.cvar_95_inr), sub: 'Expected shortfall',                              color: '#ef4444' },
+                { label: 'CVaR 99%', value: fmtInr(rp.cvar_99_inr), sub: 'Tail risk',                                       color: '#dc2626' },
+              ].map(({ label, value, sub, color }) => (
+                <div key={label} className="bg-zinc-800/60 rounded-lg p-2 text-center">
+                  <p className="text-[10px] text-zinc-500 mb-0.5">{label}</p>
+                  <p className="text-sm font-bold" style={{ color }}>{value}</p>
+                  <p className="text-[9px] text-zinc-600">{sub}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 text-[10px] text-zinc-500 space-y-1">
+              <p>VaR = max 1-day loss at confidence level</p>
+              <p>CVaR = expected loss <em>given</em> VaR is breached</p>
+            </div>
+          </div>
+
+          {/* Kelly + Volatility Regime */}
+          <div className="bg-zinc-900/80 border border-zinc-700/40 rounded-2xl p-4">
+            <h2 className="text-sm font-bold text-white mb-3">Kelly Position Sizing</h2>
+            <div className="space-y-2">
+              {[
+                { label: 'Kelly Fraction',   value: fmtPct(rp.kelly_fraction * 100, 3),  color: '#a78bfa' },
+                { label: 'Kelly Position',   value: fmtInr(rp.kelly_position_inr),        color: '#8b5cf6' },
+                { label: 'ATR Position',     value: fmtInr(rp.atr_position_inr || rp.position_size_inr), color: '#3b82f6' },
+                { label: 'Final (min)',       value: fmtInr(rp.position_size_inr),         color: '#10b981' },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="flex items-center justify-between py-1 border-b border-zinc-800">
+                  <span className="text-[11px] text-zinc-400">{label}</span>
+                  <span className="text-[11px] font-bold" style={{ color }}>{value}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <div
+                className="flex-1 py-1.5 rounded-lg text-[10px] font-bold text-center"
+                style={{
+                  background: rp.vol_regime === 'HIGH' ? '#ef444420' : rp.vol_regime === 'LOW' ? '#10b98120' : '#3b82f620',
+                  color: rp.vol_regime === 'HIGH' ? '#ef4444' : rp.vol_regime === 'LOW' ? '#10b981' : '#3b82f6',
+                  border: `1px solid ${rp.vol_regime === 'HIGH' ? '#ef444440' : rp.vol_regime === 'LOW' ? '#10b98140' : '#3b82f640'}`,
+                }}
+              >
+                {rp.vol_regime || '—'} VOL REGIME
+              </div>
+              <div className="px-2 py-1.5 bg-zinc-800 rounded-lg text-[10px] text-zinc-400">
+                ×{rp.vol_regime_mult || 1}
+              </div>
+            </div>
+            <p className="text-[10px] text-zinc-600 mt-2">
+              Final = min(Kelly, ATR) × vol-regime mult. Conservative bias enforced.
+            </p>
+          </div>
+
+          {/* Dynamic Budget + Portfolio Heat */}
+          <div className="bg-zinc-900/80 border border-zinc-700/40 rounded-2xl p-4">
+            <h2 className="text-sm font-bold text-white mb-3">Dynamic Risk Budget</h2>
+            {/* Budget state badge */}
+            <div className="flex items-center gap-2 mb-3">
+              <div
+                className="px-3 py-1 rounded-full text-xs font-bold"
+                style={{
+                  background: rp.risk_budget_state === 'STOP' ? '#ef444420'
+                    : rp.risk_budget_state === 'REDUCED' ? '#f59e0b20'
+                    : rp.risk_budget_state === 'CAUTIOUS' ? '#f97316'+'20'
+                    : '#10b98120',
+                  color: rp.risk_budget_state === 'STOP' ? '#ef4444'
+                    : rp.risk_budget_state === 'REDUCED' ? '#f59e0b'
+                    : rp.risk_budget_state === 'CAUTIOUS' ? '#f97316'
+                    : '#10b981',
+                }}
+              >
+                {rp.risk_budget_state || 'NORMAL'}
+              </div>
+              <span className="text-[11px] text-zinc-500">
+                ×{rp.risk_budget_multiplier || 1} multiplier
+              </span>
+            </div>
+            <div className="space-y-2">
+              {[
+                { label: 'Remaining Budget', value: fmtInr(rp.risk_budget_remaining), color: '#10b981' },
+                { label: 'Max Daily Loss',   value: fmtInr(rp.daily_loss_limit),       color: '#ef4444' },
+                { label: 'Portfolio Heat',   value: fmtPct(rp.portfolio_heat_pct, 2),  color: rp.heat_exceeded ? '#ef4444' : '#a1a1aa' },
+                { label: 'Heat Limit',       value: fmtPct(rp.max_portfolio_heat_pct, 0), color: '#6b7280' },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="flex items-center justify-between py-1 border-b border-zinc-800">
+                  <span className="text-[11px] text-zinc-400">{label}</span>
+                  <span className="text-[11px] font-bold" style={{ color }}>{value}</span>
+                </div>
+              ))}
+            </div>
+            {rp.heat_exceeded && (
+              <div className="mt-2 text-[10px] text-red-400 bg-red-900/20 rounded px-2 py-1">
+                🔴 Portfolio heat exceeded — no new trades until positions close
+              </div>
+            )}
+            <button
+              onClick={handleRecalculate}
+              disabled={recalcLoading}
+              className="w-full mt-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+            >
+              {recalcLoading ? '⟳ Recalculating…' : '↺ Live Recalculate'}
+            </button>
+          </div>
+        </div>
+
+        {/* ── Phase 2: Feasibility Warnings + Historical Context ── */}
+        {(rp.feasibility_warnings?.length > 0 || rp.hist_exceedance_pct != null) && (
+          <div className="bg-zinc-900/80 border border-zinc-700/40 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold text-white">Feasibility Analysis — NSE Historical Context</h2>
+              <span className="text-[10px] text-zinc-500">
+                {rp.nse_median_comparison || ''}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3">
+              <div className="bg-zinc-800/60 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 mb-1">% of NSE days that exceed target</p>
+                <p className="text-xl font-black" style={{ color: rp.feasibility_color || '#f59e0b' }}>
+                  {rp.hist_exceedance_pct != null ? `${rp.hist_exceedance_pct}%` : '—'}
+                </p>
+                <p className="text-[10px] text-zinc-600 mt-0.5">historical frequency</p>
+              </div>
+              <div className="bg-zinc-800/60 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 mb-1">Min win-rate to break even</p>
+                <p className="text-xl font-black text-blue-400">
+                  {rp.required_win_rate_min != null ? `${rp.required_win_rate_min}%` : '—'}
+                </p>
+                <p className="text-[10px] text-zinc-600 mt-0.5">at 1:1.5 R:R ratio</p>
+              </div>
+              <div className="bg-zinc-800/60 rounded-xl p-3 text-center">
+                <p className="text-[10px] text-zinc-500 mb-1">Feasibility score</p>
+                <p className="text-xl font-black" style={{ color: rp.feasibility_color || '#f59e0b' }}>
+                  {rp.feasibility_score ?? '—'} / 100
+                </p>
+                <p className="text-[10px]" style={{ color: rp.feasibility_color }}>{rp.feasibility_label}</p>
+              </div>
+            </div>
+            {/* Suggestion */}
+            {rp.feasibility_suggestion && (
+              <p className="text-xs text-zinc-400 bg-zinc-800/40 rounded-lg px-3 py-2 mb-2">
+                💡 {rp.feasibility_suggestion}
+              </p>
+            )}
+            {/* Warnings */}
+            {rp.feasibility_warnings?.length > 0 && (
+              <div className="space-y-1">
+                {rp.feasibility_warnings.map((w, i) => (
+                  <div key={i} className="text-xs text-amber-300 bg-amber-900/20 border border-amber-700/30 rounded-lg px-3 py-1.5">
+                    {w}
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Alternative targets */}
+            {rp.alternative_targets && Object.keys(rp.alternative_targets).length > 0 && (
+              <div className="mt-3">
+                <p className="text-[10px] text-zinc-500 mb-1">Realistic alternatives:</p>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(rp.alternative_targets).slice(0, 3).map(([label, val]) => (
+                    <span key={label} className="text-[10px] px-2 py-1 bg-zinc-800 rounded text-zinc-400">
+                      {label.split('(')[0].trim()}: <strong className="text-white">₹{fmt(val, 0)}</strong>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Phase 2: DreamerV3 Capital State Vector ── */}
+        {capitalState && (
+          <div className="bg-zinc-900/80 border border-zinc-700/40 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-bold text-white">DreamerV3 Capital State Vector</h2>
+              <span className="text-[10px] text-zinc-500">Normalised inputs to world model</span>
+            </div>
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              {Object.entries(capitalState).map(([key, val]) => {
+                const pct = Math.abs(val) * 100;
+                const isNeg = val < 0;
+                const label = key.replace(/_/g, ' ').replace('normalised', 'norm').replace('fraction', 'frac');
+                return (
+                  <div key={key} className="bg-zinc-800/60 rounded-lg p-2">
+                    <p className="text-[9px] text-zinc-500 mb-1 leading-tight">{label}</p>
+                    <div className="h-1.5 bg-zinc-700 rounded-full overflow-hidden mb-1">
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${Math.min(pct, 100)}%`,
+                          background: isNeg ? '#ef4444' : '#8b5cf6',
+                        }}
+                      />
+                    </div>
+                    <p className="text-[10px] font-bold text-center" style={{ color: isNeg ? '#ef4444' : '#a78bfa' }}>
+                      {Number(val).toFixed(3)}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-zinc-600 mt-2">
+              These 6 values are appended to the DreamerV3 observation vector every step,
+              teaching the world model to optimize for your specific capital and target constraints.
+            </p>
+          </div>
+        )}
 
         {/* ── Auto Mode Panel + DreamerV3 Decision ── */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -822,11 +1055,17 @@ export default function RoboDashboard({ selectedStock }) {
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     {[
                       ['Daily return needed', fmtPct(preview.required_daily_return_pct)],
-                      ['Risk / trade', fmtPct(preview.risk_per_trade_pct, 1)],
-                      ['Position size', fmtInr(preview.position_size_inr)],
-                      ['Max daily loss', fmtInr(preview.max_daily_loss_inr)],
-                      ['VaR 1-day 95%', fmtInr(preview.var_1day_95)],
-                      ['Min win-rate', fmtPct(preview.min_winrate_needed, 0)],
+                      ['Kelly fraction',      fmtPct((preview.kelly_fraction || 0) * 100, 3)],
+                      ['Kelly position',      fmtInr(preview.kelly_position_inr)],
+                      ['Final position',      fmtInr(preview.position_size_inr)],
+                      ['VaR 95%',             fmtInr(preview.var_95_inr)],
+                      ['CVaR 95%',            fmtInr(preview.cvar_95_inr)],
+                      ['VaR 99%',             fmtInr(preview.var_99_inr)],
+                      ['Max daily loss',      fmtInr(preview.daily_loss_limit)],
+                      ['Vol regime',          preview.vol_regime || '—'],
+                      ['NSE history',         `${preview.hist_exceedance_pct}% of days`],
+                      ['Min win-rate',        fmtPct(preview.required_win_rate_min, 0)],
+                      ['Budget state',        preview.risk_budget_state || 'NORMAL'],
                     ].map(([k, v]) => (
                       <div key={k} className="flex justify-between">
                         <span className="text-zinc-500">{k}</span>
@@ -834,6 +1073,14 @@ export default function RoboDashboard({ selectedStock }) {
                       </div>
                     ))}
                   </div>
+                  {/* Feasibility warnings in preview */}
+                  {preview.feasibility_warnings?.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {preview.feasibility_warnings.map((w, i) => (
+                        <p key={i} className="text-[10px] text-amber-400">{w}</p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
