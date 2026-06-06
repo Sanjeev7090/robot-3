@@ -51,7 +51,7 @@ import SectorTrending from './SectorTrending';
 import SectorStocksSheet from './SectorStocksSheet';
 import TopMoversWidget from './TopMoversWidget';
 import { Toaster, toast } from 'sonner';
-import { Star, Wallet, Bell, ChartLineUp, List, CurrencyBtc, Lightning, Newspaper, ArrowsLeftRight, Sun, Moon } from '@phosphor-icons/react';
+import { Star, Wallet, Bell, ChartLineUp, List, CurrencyBtc, Lightning, Newspaper, Sun, Moon } from '@phosphor-icons/react';
 import { useTheme } from '../context/ThemeContext';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -561,15 +561,15 @@ const TradingDashboard = () => {
           >
             <span className="text-[10px]">3D</span>
           </button>
-          {/* HYBRID MODE BUTTON */}
+          {/* DREAMER V3 ROBO-TRADER BUTTON */}
           <button
-            onClick={() => setHybridMode(true)}
-            className="liquid-glass-btn flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest border border-[#3366FF]/50 text-[#3366FF] hover:bg-[#3366FF]/20 hover:border-[#3366FF] px-2.5 py-1.5 rounded"
-            data-testid="hybrid-mode-btn"
-            title="Switch to QSC Hybrid Mode"
+            onClick={() => setActiveTab('robo')}
+            className="liquid-glass-btn flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest border border-violet-500/50 text-violet-400 hover:bg-violet-500/20 hover:border-violet-400 px-2.5 py-1.5 rounded transition-all"
+            data-testid="robo-trader-btn"
+            title="Dreamer V3 Robo-Trader"
           >
-            <ArrowsLeftRight size={12} weight="bold" />
-            <span className="hidden sm:inline">HYBRID</span>
+            <span className="text-sm">🤖</span>
+            <span className="hidden sm:inline">ROBO</span>
           </button>
         </div>
       </header>
