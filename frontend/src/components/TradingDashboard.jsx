@@ -427,10 +427,12 @@ const TradingDashboard = () => {
     } catch (error) { /* silent */ }
   };
 
+  // fetchSignal is a plain function (not memoized) so excluded from deps intentionally
   useEffect(() => {
     if (!pivotPoint) return;
     const interval = setInterval(() => fetchSignal(pivotPoint), 60000);
     return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pivotPoint, selectedStock]);
 
   const isCrypto = selectedStock?.type === 'CRYPTO';
@@ -771,7 +773,7 @@ const TradingDashboard = () => {
             )}
 
             {activeTab === 'robo' && (
-              <RoboDashboard selectedStock={selectedStock} />
+              <RoboDashboard selectedStock={selectedStock} onSelectStock={handleStockSelect} />
             )}
 
             {activeTab === 'ensemble' && (

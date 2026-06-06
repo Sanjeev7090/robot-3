@@ -152,7 +152,7 @@ function NotificationBanner({ rs, loopStatus }) {
 // MAIN DASHBOARD
 // ════════════════════════════════════════════════════════════════════════════
 
-export default function RoboAdvisorDashboard({ selectedStock }) {
+export default function RoboAdvisorDashboard({ selectedStock, onSelectStock }) {
   // ── State ─────────────────────────────────────────────────────────────────
   const [roboState,     setRoboState]     = useState(null);
   const [loopStatus,    setLoopStatus]    = useState(null);
@@ -675,7 +675,7 @@ export default function RoboAdvisorDashboard({ selectedStock }) {
         {/* ── AGENTS TAB ────────────────────────────────────────────────── */}
         {activeTab === 'agents' && (
           <div className="bg-zinc-900/60 border border-zinc-800/50 rounded-2xl p-4">
-            <AgentDiscussionPanel capital={settings.allocated_capital || 100000} />
+            <AgentDiscussionPanel capital={settings.allocated_capital || 100000} onSelectStock={onSelectStock} />
           </div>
         )}
 
@@ -689,6 +689,7 @@ export default function RoboAdvisorDashboard({ selectedStock }) {
           settings={settings}
           onSave={fetchAll}
           onClose={() => setSettingsOpen(false)}
+          onSelectStock={onSelectStock}
         />
       )}
     </div>

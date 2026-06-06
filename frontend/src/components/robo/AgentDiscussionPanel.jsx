@@ -207,7 +207,7 @@ function TopPicksBar({ picks, onSelectTicker }) {
 }
 
 // ── MAIN COMPONENT ────────────────────────────────────────────────────────────
-export default function AgentDiscussionPanel({ capital = 100000 }) {
+export default function AgentDiscussionPanel({ capital = 100000, onSelectStock }) {
   const [discussion,     setDiscussion]     = useState(null);
   const [topPicks,       setTopPicks]       = useState([]);
   const [manualTickers,  setManualTickers]  = useState([]);
@@ -217,6 +217,10 @@ export default function AgentDiscussionPanel({ capital = 100000 }) {
   const [tickerInput,    setTickerInput]    = useState('');
   const [lastScanTime,   setLastScanTime]   = useState(null);
   const [deepMode,       setDeepMode]       = useState(false);
+  const [searchQuery,    setSearchQuery]    = useState('');
+  const [searchResults,  setSearchResults]  = useState([]);
+  const [searchLoading,  setSearchLoading]  = useState(false);
+  const searchDebounceRef = React.useRef(null);
 
   // Fetch current discussion + manual tickers on mount
   const fetchDiscussion = useCallback(async () => {
@@ -287,6 +291,46 @@ export default function AgentDiscussionPanel({ capital = 100000 }) {
     } catch { /* silent */ }
   };
 
+  // Load stock in chart when TOP PICK is clicked
+  const handleLoadInChart = async (ticker) => {
+    handleScan(ticker); // always trigger scan
+    try {
+      const base = ticker.replace('.NS', '').replace('.BO', '');
+      const res = await axios.get(`${API}/stock/search`, { params: { q: base } });
+      const results = res.data.results || [];
+      const match = results.find(r => r.ticker === ticker) || results[0];
+      if (match) {
+        // 1. Load in main chart
+        if (onSelectStock) onSelectStock(match);
+        // 2. Update Robot 3.0 primary ticker in backend settings
+        axios.post(`${API}/robo/settings`, { ticker: match.ticker }).catch(() => {});
+        toast.success(`Loaded ${match.name || ticker} in chart`);
+      }
+    } catch { /* silent — scan still runs */ }
+  };
+
+  // Search stocks for manual input autocomplete
+  const handleSearchInput = (val) => {
+    setSearchQuery(val);
+    setTickerInput(val.toUpperCase());
+    clearTimeout(searchDebounceRef.current);
+    if (val.length < 1) { setSearchResults([]); return; }
+    searchDebounceRef.current = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const res = await axios.get(`${API}/stock/search`, { params: { q: val } });
+        setSearchResults(res.data.results || []);
+      } catch { setSearchResults([]); }
+      finally { setSearchLoading(false); }
+    }, 400);
+  };
+
+  const handleSelectSearchResult = (stock) => {
+    setTickerInput(stock.ticker);
+    setSearchQuery(stock.ticker);
+    setSearchResults([]);
+  };
+
   const disc = discussion;
   const signals = disc?.agent_signals || [];
 
@@ -350,16 +394,40 @@ export default function AgentDiscussionPanel({ capital = 100000 }) {
 
         {/* Manual ticker input */}
         <div className="flex gap-2">
-          <div className="flex-1 flex items-center gap-2 bg-zinc-800/60 border border-zinc-700/40 rounded-xl px-3 py-1.5">
-            <Search size={10} className="text-zinc-600 flex-shrink-0" />
-            <input
-              value={tickerInput}
-              onChange={e => setTickerInput(e.target.value.toUpperCase())}
-              onKeyDown={e => e.key === 'Enter' && handleAddTicker()}
-              placeholder="Add ticker e.g. TCS"
-              className="bg-transparent text-[10px] text-white placeholder-zinc-600 outline-none w-full"
-              data-testid="ticker-input"
-            />
+          <div className="flex-1 relative">
+            <div className="flex items-center gap-2 bg-zinc-800/60 border border-zinc-700/40 rounded-xl px-3 py-1.5">
+              <Search size={10} className="text-zinc-600 flex-shrink-0" />
+              <input
+                value={searchQuery}
+                onChange={e => handleSearchInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { setSearchResults([]); handleAddTicker(); }
+                  if (e.key === 'Escape') setSearchResults([]);
+                }}
+                placeholder="Add ticker e.g. TCS"
+                className="bg-transparent text-[10px] text-white placeholder-zinc-600 outline-none w-full"
+                data-testid="ticker-input"
+              />
+              {searchLoading && <span className="w-2.5 h-2.5 border border-zinc-600 border-t-violet-400 rounded-full animate-spin flex-shrink-0" />}
+            </div>
+            {/* Search dropdown */}
+            {searchResults.length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-900 border border-zinc-700 rounded-xl overflow-hidden z-50 max-h-48 overflow-y-auto shadow-xl">
+                {searchResults.slice(0, 8).map((stock, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleSelectSearchResult(stock)}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-zinc-800 transition-colors border-b border-zinc-800/60 last:border-0"
+                  >
+                    <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-emerald-900/40 text-emerald-400 font-mono flex-shrink-0">
+                      {stock.exchange || 'NSE'}
+                    </span>
+                    <span className="text-[10px] font-mono font-bold text-white">{stock.ticker}</span>
+                    <span className="text-[9px] text-zinc-500 truncate ml-auto">{stock.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <button
             onClick={handleAddTicker}
@@ -414,7 +482,7 @@ export default function AgentDiscussionPanel({ capital = 100000 }) {
           <p className="text-[8px] text-zinc-600 uppercase tracking-widest font-bold mb-1.5">
             Top Picks
           </p>
-          <TopPicksBar picks={topPicks} onSelectTicker={(t) => handleScan(t)} />
+          <TopPicksBar picks={topPicks} onSelectTicker={handleLoadInChart} />
         </div>
       )}
 
@@ -488,7 +556,7 @@ export default function AgentDiscussionPanel({ capital = 100000 }) {
             <div className="text-3xl mb-2">🤝</div>
             <p className="text-xs text-zinc-600">No agent discussion yet</p>
             <p className="text-[9px] text-zinc-700 mt-1">
-              Click "Scan Now" to run multi-agent analysis
+              Click &quot;Scan Now&quot; to run multi-agent analysis
             </p>
           </div>
         </div>

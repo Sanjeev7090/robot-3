@@ -3,9 +3,9 @@
  * Full-screen modal for editing Daily Profit Target and Allocated Capital.
  * Shows live risk preview (Kelly, VaR, feasibility) on change.
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { X, TrendingUp, Wallet, Shield, AlertTriangle } from 'lucide-react';
+import { X, TrendingUp, Wallet, Shield, AlertTriangle, Search } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -41,13 +41,18 @@ function FeasibilityBadge({ score, label, color }) {
   );
 }
 
-export default function TargetCapitalSettings({ settings, onSave, onClose }) {
+export default function TargetCapitalSettings({ settings, onSave, onClose, onSelectStock }) {
   const [form, setForm]           = useState({ ...settings });
   const [preview, setPreview]     = useState(null);
   const [prevLoading, setPrevLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
   const [error, setError]         = useState(null);
   const debounceRef               = useRef(null);
+
+  // Ticker search state
+  const [tickerQuery,   setTickerQuery]   = useState(settings.ticker || '');
+  const [tickerResults, setTickerResults] = useState([]);
+  const [tickerLoading, setTickerLoading] = useState(false);
 
   // Auto-preview on input change (debounced 600ms)
   useEffect(() => {
@@ -72,6 +77,33 @@ export default function TargetCapitalSettings({ settings, onSave, onClose }) {
     } finally {
       setPrevLoading(false);
     }
+  };
+
+  // Ticker search handler
+  const handleTickerChange = useCallback((val) => {
+    setTickerQuery(val);
+    setForm(f => ({ ...f, ticker: val.toUpperCase() }));
+  }, []);
+
+  // Debounced ticker search via useEffect (proper React pattern)
+  useEffect(() => {
+    if (tickerQuery.length < 1) { setTickerResults([]); return; }
+    const timer = setTimeout(async () => {
+      setTickerLoading(true);
+      try {
+        const res = await axios.get(`${API}/stock/search`, { params: { q: tickerQuery } });
+        setTickerResults(res.data.results || []);
+      } catch { setTickerResults([]); } finally { setTickerLoading(false); }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [tickerQuery]);
+
+  const handleSelectTicker = (stock) => {
+    setTickerQuery(stock.ticker);
+    setForm(f => ({ ...f, ticker: stock.ticker }));
+    setTickerResults([]);
+    // Also load in chart if callback available
+    if (onSelectStock) onSelectStock(stock);
   };
 
   const handleSave = async () => {
@@ -192,14 +224,48 @@ export default function TargetCapitalSettings({ settings, onSave, onClose }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-zinc-300 mb-2">Primary Ticker</label>
-              <input
-                type="text"
-                value={form.ticker}
-                onChange={e => setForm(f => ({ ...f, ticker: e.target.value.toUpperCase() }))}
-                className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-white text-sm font-mono focus:outline-none focus:border-violet-500 transition-colors"
-                placeholder="e.g. RELIANCE.NS"
-                data-testid="ticker-input"
-              />
+              <div className="relative">
+                <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2.5 focus-within:border-violet-500 transition-colors">
+                  <Search size={11} className="text-zinc-500 flex-shrink-0" />
+                  <input
+                    type="text"
+                    value={tickerQuery}
+                    onChange={e => handleTickerChange(e.target.value)}
+                    onKeyDown={e => e.key === 'Escape' && setTickerResults([])}
+                    className="flex-1 bg-transparent text-white text-sm font-mono outline-none placeholder-zinc-600"
+                    placeholder="e.g. RELIANCE.NS"
+                    data-testid="ticker-input"
+                  />
+                  {tickerLoading && (
+                    <span className="w-3 h-3 border border-zinc-600 border-t-violet-400 rounded-full animate-spin flex-shrink-0" />
+                  )}
+                </div>
+                {tickerResults.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-900 border border-zinc-700 rounded-xl overflow-hidden z-50 max-h-52 overflow-y-auto shadow-2xl">
+                    {tickerResults.slice(0, 8).map((stock, i) => {
+                      const badge = stock.type === 'INDEX' ? 'IDX' : (stock.exchange || 'NSE');
+                      const badgeColor = stock.type === 'INDEX'
+                        ? 'bg-amber-900/30 text-amber-400'
+                        : stock.exchange === 'BSE'
+                          ? 'bg-purple-900/30 text-purple-400'
+                          : 'bg-emerald-900/30 text-emerald-400';
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => handleSelectTicker(stock)}
+                          className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-zinc-800 transition-colors border-b border-zinc-800/50 last:border-0"
+                        >
+                          <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded font-mono flex-shrink-0 ${badgeColor}`}>
+                            {badge}
+                          </span>
+                          <span className="text-xs font-mono font-bold text-white">{stock.ticker}</span>
+                          <span className="text-[9px] text-zinc-500 truncate ml-auto">{stock.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
             <div>
               <label className="block text-xs font-bold text-zinc-300 mb-2">Risk Tolerance</label>

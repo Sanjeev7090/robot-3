@@ -205,6 +205,14 @@ const KronosForecastPanel = ({ selectedStock, timeframe = '1D' }) => {
     setLoading(true);
     setCollapsed(false);
     try {
+      // ── Auto-warmup if model not loaded ──────────────────────────────────
+      if (!modelStatus.loaded) {
+        setError('Kronos warming up... please wait (30–60s)');
+        await axios.post(`${API}/kronos/warmup`, {}, { timeout: 180000 });
+        await refreshStatus();
+        setError(null);
+      }
+
       const tf = resolveKronosTf(timeframe);
       const resp = await axios.post(`${API}/kronos/forecast`, {
         ticker: selectedStock.ticker, timeframe: tf,
@@ -224,8 +232,23 @@ const KronosForecastPanel = ({ selectedStock, timeframe = '1D' }) => {
       });
       await refreshStatus();
     } catch (e) {
-      const msg = e?.response?.data?.detail || e?.message || 'Forecast failed';
-      setError(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      const status = e?.response?.status;
+      const msg    = e?.response?.data?.detail || e?.message || 'Forecast failed';
+      const msgStr = typeof msg === 'string' ? msg : JSON.stringify(msg);
+
+      // Auto-retry warmup if 503 (model still loading) and not already warming
+      if (status === 503 && !modelStatus.loading) {
+        setError('Kronos model not ready — starting warmup automatically...');
+        try {
+          await axios.post(`${API}/kronos/warmup`, {}, { timeout: 180000 });
+          await refreshStatus();
+          setError('Warmup done! Click Run Forecast again.');
+        } catch {
+          setError('Warmup failed — please try again');
+        }
+      } else {
+        setError(msgStr);
+      }
     } finally {
       setLoading(false);
     }
