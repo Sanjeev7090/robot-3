@@ -54,11 +54,12 @@ FNO_UNIVERSE: List[str] = [
 
 # ── Agent weights for consensus blending ──────────────────────────────────────
 AGENT_WEIGHTS: Dict[str, float] = {
-    "KronosAI":          0.28,   # highest — AI forecast model
-    "Breakout15m":       0.22,   # strong momentum confirmation
-    "TechComposite":     0.25,   # DEMON+SMC+GodzillaTTE
-    "MiroFish":          0.15,   # LangGraph / rule-based
-    "ActiveScanner":     0.10,   # volume/OI context
+    "KronosAI":          0.22,   # highest — AI forecast model
+    "Breakout15m":       0.18,   # strong momentum confirmation
+    "TechComposite":     0.20,   # DEMON+SMC+GodzillaTTE
+    "IntradayMomentum":  0.25,   # NEW — VWAP+ORB+velocity intraday engine
+    "MiroFish":          0.10,   # LangGraph / rule-based
+    "ActiveScanner":     0.05,   # volume/OI context
 }
 
 
@@ -142,6 +143,12 @@ class AgentDiscussion:
     dreamer_reasoning:         str   = ""
     # Monte Carlo
     monte_carlo:  Dict = field(default_factory=dict)
+    # ── Intraday Intelligence (new fields) ────────────────────────────────
+    win_probability:  float = 0.0   # MC target_hit_prob * 100 → 0..100
+    conviction_score: float = 0.0   # % agents agreeing with consensus
+    volume_ratio:     float = 1.0   # relative volume vs avg
+    intraday_score:   float = 0.0   # composite ranking score
+    agent_agreement_map: Dict = field(default_factory=dict)  # {agent: BUY/SELL/HOLD}
     # Meta
     timestamp:    str  = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -165,6 +172,11 @@ class AgentDiscussion:
             "dreamer_final_confidence":  round(self.dreamer_final_confidence, 1),
             "dreamer_reasoning":         self.dreamer_reasoning,
             "monte_carlo":           self.monte_carlo,
+            "win_probability":       round(self.win_probability, 1),
+            "conviction_score":      round(self.conviction_score, 1),
+            "volume_ratio":          round(self.volume_ratio, 2),
+            "intraday_score":        round(self.intraday_score, 2),
+            "agent_agreement_map":   self.agent_agreement_map,
             "timestamp":             self.timestamp,
             "duration_ms":           round(self.duration_ms, 0),
             "mode":                  self.mode,
@@ -951,6 +963,158 @@ class MiroFishAgent:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# AGENT 6 — Intraday Momentum Agent (VWAP + ORB + Velocity)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class IntradayMomentumAgent:
+    """
+    Intraday-specific momentum agent using 5m + 15m data.
+    Detects:
+      - VWAP deviation (price above/below VWAP = smart money direction)
+      - Price velocity (5-bar rate of change = momentum strength)
+      - Volume surge (current vs session avg = participation)
+      - Opening Range Breakout (first 30min breakout = intraday direction)
+      - RSI-15m (overbought/oversold on 15m)
+    Signal: BUY when 2+ conditions align bullishly with volume confirmation.
+    """
+
+    def analyze(self, ticker: str) -> AgentSignal:
+        try:
+            df5  = _download_ohlcv(ticker, period="3d", interval="5m")
+            df15 = _download_ohlcv(ticker, period="5d", interval="15m")
+
+            if df5.empty or len(df5) < 10:
+                return self._hold(ticker, "Insufficient 5m intraday data")
+
+            c5 = df5["Close"].astype(float)
+            h5 = df5["High"].astype(float)
+            l5 = df5["Low"].astype(float)
+            v5 = df5["Volume"].astype(float)
+
+            # ── VWAP (session) ──────────────────────────────────────────────
+            typical = (h5 + l5 + c5) / 3
+            vwap    = (typical * v5).cumsum() / (v5.cumsum() + 1e-8)
+            cur_c    = float(c5.iloc[-1])
+            cur_vwap = float(vwap.iloc[-1])
+            vwap_dev = (cur_c - cur_vwap) / (cur_vwap + 1e-8) * 100
+
+            # ── Price Velocity (5-bar ROC) ──────────────────────────────────
+            velocity = 0.0
+            if len(c5) >= 6:
+                velocity = (float(c5.iloc[-1]) - float(c5.iloc[-6])) / (float(c5.iloc[-6]) + 1e-8) * 100
+
+            # ── Volume Surge ────────────────────────────────────────────────
+            vol_avg   = float(v5.rolling(20).mean().iloc[-1]) + 1e-8
+            vol_ratio = float(v5.iloc[-1]) / vol_avg
+
+            # ── Opening Range Breakout (first 30min = 6 × 5m candles) ──────
+            session_candles = df5.tail(78)  # ~6.5hr session
+            orb_breakout_up = orb_breakout_down = False
+            orb_high = orb_low = cur_c
+            if len(session_candles) >= 6:
+                orb_high = float(session_candles["High"].iloc[:6].max())
+                orb_low  = float(session_candles["Low"].iloc[:6].min())
+                orb_breakout_up   = cur_c > orb_high * 1.001
+                orb_breakout_down = cur_c < orb_low * 0.999
+
+            # ── RSI-15m ──────────────────────────────────────────────────────
+            rsi15 = 50.0
+            if not df15.empty and len(df15) >= 15:
+                c15   = df15["Close"].astype(float)
+                d     = c15.diff()
+                g     = d.clip(lower=0).rolling(14).mean()
+                lo    = (-d.clip(upper=0)).rolling(14).mean()
+                v     = 100 - 100 / (1 + g / (lo + 1e-8))
+                rsi15 = float(v.iloc[-1]) if not np.isnan(float(v.iloc[-1])) else 50.0
+
+            # ── Scoring ─────────────────────────────────────────────────────
+            bull_score, bear_score = 0, 0
+            bull_notes, bear_notes = [], []
+
+            if vwap_dev > 0.25:
+                bull_score += 25; bull_notes.append(f"Above VWAP +{vwap_dev:.2f}%")
+            elif vwap_dev < -0.25:
+                bear_score += 25; bear_notes.append(f"Below VWAP {vwap_dev:.2f}%")
+
+            if velocity > 0.3:
+                bull_score += 20; bull_notes.append(f"Velocity +{velocity:.2f}%")
+            elif velocity < -0.3:
+                bear_score += 20; bear_notes.append(f"Velocity {velocity:.2f}%")
+
+            if vol_ratio >= 1.5:
+                vol_bonus = min(25, int(vol_ratio * 8))
+                if bull_score >= bear_score:
+                    bull_score += vol_bonus; bull_notes.append(f"Vol {vol_ratio:.1f}× surge")
+                else:
+                    bear_score += vol_bonus; bear_notes.append(f"Vol {vol_ratio:.1f}× surge")
+
+            if orb_breakout_up:
+                bull_score += 30; bull_notes.append(f"ORB breakout >₹{orb_high:.1f}")
+            elif orb_breakout_down:
+                bear_score += 30; bear_notes.append(f"ORB breakdown <₹{orb_low:.1f}")
+
+            if 55 < rsi15 < 75:
+                bull_score += 15; bull_notes.append(f"RSI15m {rsi15:.0f} momentum")
+            elif 25 < rsi15 < 45:
+                bear_score += 15; bear_notes.append(f"RSI15m {rsi15:.0f} oversold bounce")
+
+            atr14 = _compute_atr(h5, l5, c5, 14) if len(c5) >= 15 else cur_c * 0.01
+            indicators = {
+                "vwap": round(cur_vwap, 2),
+                "vwap_dev_pct": round(vwap_dev, 3),
+                "velocity_5bar": round(velocity, 3),
+                "vol_ratio": round(vol_ratio, 2),
+                "rsi15m": round(rsi15, 1),
+                "orb_high": round(orb_high, 2),
+                "orb_low": round(orb_low, 2),
+            }
+
+            if bull_score >= 40 and bull_score > bear_score:
+                conf = min(90, 35 + bull_score)
+                return AgentSignal(
+                    agent_name="IntradayMomentum", ticker=ticker, signal="BUY",
+                    confidence=float(conf),
+                    reasoning=f"Intraday BUY: {', '.join(bull_notes)}. Score {bull_score}/100.",
+                    entry=round(cur_c, 2),
+                    sl=round(cur_c - atr14 * 1.5, 2),
+                    target=round(cur_c + atr14 * 2.5, 2),
+                    timeframe="5m", indicators=indicators,
+                )
+
+            if bear_score >= 40 and bear_score > bull_score:
+                conf = min(90, 35 + bear_score)
+                return AgentSignal(
+                    agent_name="IntradayMomentum", ticker=ticker, signal="SELL",
+                    confidence=float(conf),
+                    reasoning=f"Intraday SELL: {', '.join(bear_notes)}. Score {bear_score}/100.",
+                    entry=round(cur_c, 2),
+                    sl=round(cur_c + atr14 * 1.5, 2),
+                    target=round(cur_c - atr14 * 2.5, 2),
+                    timeframe="5m", indicators=indicators,
+                )
+
+            return self._hold(
+                ticker,
+                f"Intraday mixed: VWAP {vwap_dev:+.2f}%, vel {velocity:+.2f}%, vol {vol_ratio:.1f}×. No clear setup.",
+                indicators=indicators,
+            )
+
+        except Exception as exc:
+            logger.debug("[IntradayMomentum] error on %s: %s", ticker, exc)
+            return AgentSignal(
+                agent_name="IntradayMomentum", ticker=ticker, signal="HOLD",
+                confidence=0.0, reasoning="Intraday analysis unavailable.", error=str(exc),
+            )
+
+    @staticmethod
+    def _hold(ticker: str, reason: str, indicators: Dict = None) -> AgentSignal:
+        return AgentSignal(
+            agent_name="IntradayMomentum", ticker=ticker, signal="HOLD",
+            confidence=25.0, reasoning=reason, indicators=indicators or {},
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MONTE CARLO SCENARIO ENGINE
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1047,16 +1211,17 @@ class StrategyCollaborator:
     """
 
     def __init__(self):
-        self.active_scanner   = ActiveStockScannerAgent()
-        self.breakout15m      = BreakoutAgent15m()
-        self.tech_composite   = TechnicalCompositeAgent()
-        self.kronos           = KronosAgent()
-        self.mirofish         = MiroFishAgent()
-        self.monte_carlo_eng  = MonteCarloScenarioEngine()
+        self.active_scanner     = ActiveStockScannerAgent()
+        self.breakout15m        = BreakoutAgent15m()
+        self.tech_composite     = TechnicalCompositeAgent()
+        self.kronos             = KronosAgent()
+        self.mirofish           = MiroFishAgent()
+        self.intraday_momentum  = IntradayMomentumAgent()   # NEW
+        self.monte_carlo_eng    = MonteCarloScenarioEngine()
 
         self._lock            = threading.Lock()
         self._discussion_cache: Dict[str, AgentDiscussion] = {}
-        self._cache_ttl       = 180   # 3 minutes
+        self._cache_ttl       = 120   # 2 minutes (reduced for fresher intraday data)
 
     # ── Core: run full discussion for one ticker ───────────────────────────
 
@@ -1091,17 +1256,18 @@ class StrategyCollaborator:
 
         # ── Run agents in parallel ────────────────────────────────────────
         agent_tasks = {
-            "active_scanner":  lambda: self.active_scanner.analyze(ticker),
-            "breakout15m":     lambda: self.breakout15m.analyze(ticker),
-            "tech_composite":  lambda: self.tech_composite.analyze(ticker),
-            "kronos":          lambda: self.kronos.analyze(ticker),
-            "mirofish":        lambda: self.mirofish.analyze(ticker, deep=deep),
+            "active_scanner":   lambda: self.active_scanner.analyze(ticker),
+            "breakout15m":      lambda: self.breakout15m.analyze(ticker),
+            "tech_composite":   lambda: self.tech_composite.analyze(ticker),
+            "kronos":           lambda: self.kronos.analyze(ticker),
+            "mirofish":         lambda: self.mirofish.analyze(ticker, deep=deep),
+            "intraday_momentum": lambda: self.intraday_momentum.analyze(ticker),
         }
 
         signals: List[AgentSignal] = []
-        with ThreadPoolExecutor(max_workers=5) as ex:
+        with ThreadPoolExecutor(max_workers=6) as ex:
             futures = {ex.submit(fn): name for name, fn in agent_tasks.items()}
-            for fut in as_completed(futures, timeout=30):
+            for fut in as_completed(futures, timeout=35):
                 try:
                     sig = fut.result()
                     signals.append(sig)
@@ -1137,11 +1303,12 @@ class StrategyCollaborator:
         auto  : NSE most-active + F&O
         manual: only manual_tickers
         hybrid: both combined
+        Enhanced: filters HOLDs, sorts by intraday_score, runs MC for all picks.
         """
         tickers: List[str] = []
 
         if mode in ("auto", "hybrid"):
-            active = self.active_scanner.scan_universe(20)
+            active = self.active_scanner.scan_universe(25)  # increased to 25
             tickers.extend([a["ticker"] for a in active])
 
         if mode in ("manual", "hybrid") and manual_tickers:
@@ -1150,26 +1317,35 @@ class StrategyCollaborator:
                     tickers.append(t)
 
         if not tickers:
-            tickers = ["RELIANCE.NS", "TCS.NS", "SBIN.NS"]
+            tickers = ["RELIANCE.NS", "TCS.NS", "SBIN.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
 
-        # Limit to top 10 to avoid too many API calls
-        tickers = list(dict.fromkeys(tickers))[:10]
+        # Limit to top 20 to balance coverage vs speed
+        tickers = list(dict.fromkeys(tickers))[:20]
 
         results: List[AgentDiscussion] = []
-        with ThreadPoolExecutor(max_workers=4) as ex:
+        with ThreadPoolExecutor(max_workers=5) as ex:
             futures = {
                 ex.submit(self.run_discussion, t, capital): t
                 for t in tickers
             }
-            for fut in as_completed(futures, timeout=60):
+            for fut in as_completed(futures, timeout=90):
                 try:
                     results.append(fut.result())
                 except Exception as exc:
                     logger.warning("[Collaborator] scan_and_rank ticker failed: %s", exc)
 
-        # Sort by absolute consensus confidence (strongest signal first)
-        results.sort(key=lambda d: d.consensus_confidence, reverse=True)
-        return results[:top_n]
+        # Sort by intraday_score (composite: confidence + win_prob + volume)
+        results.sort(key=lambda d: d.intraday_score, reverse=True)
+
+        # Prefer non-HOLD results; fall back to all if none
+        non_hold = [d for d in results if d.consensus != "HOLD"]
+        final = non_hold[:top_n] if non_hold else results[:top_n]
+
+        logger.info(
+            "[Collaborator] scan_and_rank done | total=%d, non_hold=%d, returning=%d",
+            len(results), len(non_hold), len(final),
+        )
+        return final
 
     def get_active_stocks(self, limit: int = 25) -> List[Dict]:
         """Return most-active stock universe (cached)."""
@@ -1190,11 +1366,12 @@ class StrategyCollaborator:
         bull_count = sum(1 for s in signals if s.signal == "BUY")
         bear_count = sum(1 for s in signals if s.signal == "SELL")
         hold_count = sum(1 for s in signals if s.signal == "HOLD")
+        total_agents = len(signals) or 1
 
         # Weighted score
-        total_weight = sum(AGENT_WEIGHTS.get(s.agent_name, 0.2) for s in signals) + 1e-8
+        total_weight = sum(AGENT_WEIGHTS.get(s.agent_name, 0.15) for s in signals) + 1e-8
         weighted_score = sum(
-            AGENT_WEIGHTS.get(s.agent_name, 0.2) * s.direction_score
+            AGENT_WEIGHTS.get(s.agent_name, 0.15) * s.direction_score
             for s in signals
         ) / total_weight
 
@@ -1209,29 +1386,53 @@ class StrategyCollaborator:
             consensus     = "HOLD"
             consensus_conf = max(20.0, 40 - abs(weighted_score))
 
+        # ── Conviction Score: % agents agreeing with consensus ────────────
+        if consensus == "BUY":
+            agreeing = bull_count
+        elif consensus == "SELL":
+            agreeing = bear_count
+        else:
+            agreeing = hold_count
+        conviction_score = (agreeing / total_agents) * 100.0
+
+        # ── Agent Agreement Map (for UI cross-talk viz) ───────────────────
+        agent_agreement_map = {s.agent_name: s.signal for s in signals}
+
+        # ── Volume Ratio (from IntradayMomentum or ActiveScanner) ─────────
+        volume_ratio = 1.0
+        for s in signals:
+            if s.agent_name == "IntradayMomentum" and s.indicators.get("vol_ratio"):
+                volume_ratio = float(s.indicators["vol_ratio"])
+                break
+            if s.agent_name == "ActiveScanner" and s.indicators.get("vol_ratio"):
+                volume_ratio = float(s.indicators["vol_ratio"])
+
         # ── Dreamer V3 input features ──────────────────────────────────────
         agent_map = {s.agent_name: s for s in signals}
+        _hold_sig = AgentSignal("", "", "HOLD", 0, "")
         dreamer_features = {
-            "consensus_score":      round(weighted_score / 100.0, 4),  # normalised -1..+1
-            "bull_fraction":        round(bull_count / max(len(signals), 1), 3),
-            "bear_fraction":        round(bear_count / max(len(signals), 1), 3),
-            "kronos_direction":     agent_map.get("KronosAI", AgentSignal("", "", "HOLD", 0, "")).direction_score / 100.0,
-            "breakout15m_signal":   agent_map.get("Breakout15m", AgentSignal("", "", "HOLD", 0, "")).direction_score / 100.0,
-            "tech_composite_score": agent_map.get("TechComposite", AgentSignal("", "", "HOLD", 0, "")).direction_score / 100.0,
-            "agent_agreement_rate": round((max(bull_count, bear_count, hold_count)) / max(len(signals), 1), 3),
+            "consensus_score":        round(weighted_score / 100.0, 4),
+            "bull_fraction":          round(bull_count / total_agents, 3),
+            "bear_fraction":          round(bear_count / total_agents, 3),
+            "conviction_score":       round(conviction_score / 100.0, 3),
+            "volume_ratio":           round(volume_ratio, 3),
+            "kronos_direction":       agent_map.get("KronosAI", _hold_sig).direction_score / 100.0,
+            "breakout15m_signal":     agent_map.get("Breakout15m", _hold_sig).direction_score / 100.0,
+            "tech_composite_score":   agent_map.get("TechComposite", _hold_sig).direction_score / 100.0,
+            "intraday_momentum":      agent_map.get("IntradayMomentum", _hold_sig).direction_score / 100.0,
+            "agent_agreement_rate":   round(max(bull_count, bear_count, hold_count) / total_agents, 3),
         }
 
-        # ── Dreamer V3 final signal (blend with DreamerV3 prediction) ──────
-        # This is computed when orchestrator calls with dreamer state
+        # ── Dreamer V3 final signal ─────────────────────────────────────────
         dreamer_final  = consensus
         dreamer_conf   = consensus_conf
         dreamer_reason = (
-            f"{bull_count} bull · {bear_count} bear · {hold_count} hold. "
-            f"Weighted consensus score: {weighted_score:+.1f}/100. "
-            f"Confidence: {consensus_conf:.0f}%."
+            f"{bull_count} bull · {bear_count} bear · {hold_count} hold · "
+            f"conviction {conviction_score:.0f}%. "
+            f"Weighted score: {weighted_score:+.1f}/100. Confidence: {consensus_conf:.0f}%."
         )
 
-        # ── Monte Carlo (use best entry signal) ───────────────────────────
+        # ── Monte Carlo (run for best non-HOLD signal) ─────────────────────
         mc_result: Dict = {}
         best_sig = max(
             (s for s in signals if s.signal != "HOLD" and s.entry > 0 and s.sl > 0 and s.target > 0),
@@ -1246,6 +1447,23 @@ class StrategyCollaborator:
                 capital = capital,
                 ticker  = ticker,
                 n       = 1000,
+            )
+
+        # ── Win Probability from MC ─────────────────────────────────────────
+        win_probability = round(mc_result.get("target_hit_prob", 0) * 100, 1)
+
+        # ── Intraday Composite Score (for ranking across stocks) ────────────
+        # Combines: confidence, win_prob, volume, conviction — all 0-100 scaled
+        vol_boost      = min(2.0, volume_ratio) / 2.0  # 0..1
+        win_boost      = win_probability / 100.0        # 0..1
+        conv_boost     = conviction_score / 100.0       # 0..1
+        conf_boost     = consensus_conf / 100.0         # 0..1
+        if consensus == "HOLD":
+            intraday_score = 0.0
+        else:
+            intraday_score = round(
+                (conf_boost * 0.35 + win_boost * 0.30 + conv_boost * 0.20 + vol_boost * 0.15)
+                * 100.0, 2
             )
 
         return AgentDiscussion(
@@ -1263,6 +1481,11 @@ class StrategyCollaborator:
             dreamer_final_confidence = dreamer_conf,
             dreamer_reasoning        = dreamer_reason,
             monte_carlo              = mc_result,
+            win_probability          = win_probability,
+            conviction_score         = conviction_score,
+            volume_ratio             = volume_ratio,
+            intraday_score           = intraday_score,
+            agent_agreement_map      = agent_agreement_map,
             duration_ms              = (time.time() - t0) * 1000,
             mode                     = "deep" if deep else "fast",
         )
@@ -1281,6 +1504,7 @@ __all__ = [
     "TechnicalCompositeAgent",
     "KronosAgent",
     "MiroFishAgent",
+    "IntradayMomentumAgent",
     "FNO_UNIVERSE",
     "collaborator",
 ]

@@ -445,14 +445,19 @@ def trigger_scan(
         top_picks = []
         for d in discussions:
             top_picks.append({
-                "ticker":     d.ticker,
-                "consensus":  d.consensus,
-                "confidence": round(d.consensus_confidence, 1),
-                "score":      round(d.weighted_score, 1),
-                "bull":       d.bull_count,
-                "bear":       d.bear_count,
+                "ticker":         d.ticker,
+                "consensus":      d.consensus,
+                "confidence":     round(d.consensus_confidence, 1),
+                "score":          round(d.weighted_score, 1),
+                "bull":           d.bull_count,
+                "bear":           d.bear_count,
+                "win_probability": round(d.win_probability, 1),
+                "conviction_score": round(d.conviction_score, 1),
+                "volume_ratio":   round(d.volume_ratio, 2),
+                "intraday_score": round(d.intraday_score, 2),
+                "agent_agreement_map": d.agent_agreement_map,
                 "mc_target_prob": d.monte_carlo.get("target_hit_prob", 0),
-                "scan_id":    d.scan_id,
+                "scan_id":        d.scan_id,
             })
 
         # Store best discussion in state
