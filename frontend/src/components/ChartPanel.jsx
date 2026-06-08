@@ -79,10 +79,62 @@ function computeSMCData(bars) {
     if (isL) swings.push({ type: 'low',  price: bars[i].low,  startTime: bars[i].timestamp / 1000, endTime: bars[eIdx].timestamp / 1000 });
   }
 
+  // ── BOS / CHoCH detection ─────────────────────────────────────
+  // Build time-sorted swing list with bar indices
+  const sortedSwings = swings.slice().sort((a, b) => a.startTime - b.startTime);
+  const bosChoch = [];
+
+  if (sortedSwings.length >= 3) {
+    let trend = null; // 'up' | 'down'
+
+    // Seed trend from first two distinct highs vs lows
+    const firstHighs = sortedSwings.filter(s => s.type === 'high');
+    const firstLows  = sortedSwings.filter(s => s.type === 'low');
+    if (firstHighs.length >= 2)
+      trend = firstHighs[1].price > firstHighs[0].price ? 'up' : 'down';
+
+    for (let i = 1; i < sortedSwings.length; i++) {
+      const curr = sortedSwings[i];
+
+      if (curr.type === 'high') {
+        // Find the most recent previous high
+        const ph = sortedSwings.slice(0, i).filter(s => s.type === 'high');
+        if (!ph.length) continue;
+        const prev = ph[ph.length - 1];
+        if (curr.price > prev.price) {
+          if (trend === 'up') {
+            bosChoch.push({ kind: 'bos_bull', price: prev.price, eventTime: curr.startTime });
+          } else if (trend === 'down') {
+            bosChoch.push({ kind: 'choch_bull', price: prev.price, eventTime: curr.startTime });
+            trend = 'up';
+          } else {
+            trend = 'up';
+          }
+        }
+      } else {
+        // curr.type === 'low'
+        const pl = sortedSwings.slice(0, i).filter(s => s.type === 'low');
+        if (!pl.length) continue;
+        const prev = pl[pl.length - 1];
+        if (curr.price < prev.price) {
+          if (trend === 'down') {
+            bosChoch.push({ kind: 'bos_bear', price: prev.price, eventTime: curr.startTime });
+          } else if (trend === 'up') {
+            bosChoch.push({ kind: 'choch_bear', price: prev.price, eventTime: curr.startTime });
+            trend = 'down';
+          } else {
+            trend = 'down';
+          }
+        }
+      }
+    }
+  }
+
   return {
-    fvgs:   fvgs.filter(f => !f.mitigated).slice(-40),
-    swings: swings.slice(-40),
-    obs:    obs.slice(-20),
+    fvgs:     fvgs.filter(f => !f.mitigated).slice(-40),
+    swings:   swings.slice(-40),
+    obs:      obs.slice(-20),
+    bosChoch: bosChoch.slice(-20),
   };
 }
 
@@ -406,6 +458,66 @@ const ChartPanel = ({
       ctx.fillStyle = ob.type === 'bull' ? 'rgba(59,130,246,0.9)' : 'rgba(255,100,0,0.9)';
       ctx.font = 'bold 7px monospace';
       ctx.fillText('OB', left + 2, top + 8);
+      ctx.restore();
+    });
+
+    // ── 4. BOS / CHoCH ────────────────────────────────────────────
+    (smc.bosChoch || []).forEach(ev => {
+      const xEv = toX(ev.eventTime);
+      const y   = toY(ev.price);
+      if (xEv == null || y == null) return;
+
+      const isBull  = ev.kind.includes('bull');
+      const isChoch = ev.kind.includes('choch');
+      const label   = isChoch ? 'CHoCH' : 'BOS';
+
+      // Color scheme
+      const clr =
+        ev.kind === 'bos_bull'   ? '#00E676' :
+        ev.kind === 'bos_bear'   ? '#FF3B30' :
+        ev.kind === 'choch_bull' ? '#00BFFF' :
+                                   '#FF6B00';
+
+      ctx.save();
+      ctx.strokeStyle = clr;
+      ctx.lineWidth   = isChoch ? 1.5 : 1;
+      ctx.setLineDash(isChoch ? [6, 3] : []);
+      ctx.globalAlpha = 0.80;
+
+      // Horizontal broken-level line (extends ±60px around break)
+      const x1 = Math.max(0, xEv - 80);
+      const x2 = xEv + 30;
+      ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+
+      // Label pill
+      ctx.font = 'bold 8px monospace';
+      const tw = ctx.measureText(label).width + 8;
+      const th = 13;
+      const lx = xEv - tw - 4;
+      const ly = y - th / 2;
+
+      ctx.fillStyle = clr;
+      ctx.globalAlpha = 0.20;
+      ctx.fillRect(lx, ly, tw, th);
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(lx, ly, tw, th);
+      ctx.fillStyle = clr;
+      ctx.fillText(label, lx + 4, ly + 9);
+
+      // Arrow at break point
+      ctx.beginPath();
+      if (isBull) {
+        ctx.moveTo(xEv, y + 4); ctx.lineTo(xEv - 4, y + 11); ctx.lineTo(xEv + 4, y + 11);
+      } else {
+        ctx.moveTo(xEv, y - 4); ctx.lineTo(xEv - 4, y - 11); ctx.lineTo(xEv + 4, y - 11);
+      }
+      ctx.closePath();
+      ctx.fillStyle = clr;
+      ctx.fill();
+
       ctx.restore();
     });
 
