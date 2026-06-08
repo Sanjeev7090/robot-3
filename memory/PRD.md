@@ -245,6 +245,12 @@ Recent fork additions (Feb 2026):
 - **SMC Toggle button** in chart toolbar (data-testid=`smc-toggle`) — gold border when active, default ON
 - Computation: `computeSMCData(bars)` — pure JS from Pine Script logic, runs on every stock data change
 - RAF animation loop syncs canvas with chart pan/zoom automatically
+- **BOS / CHoCH layer** (Section 4 of SMC canvas):
+  - **BOS Bull** (green #00E676): uptrend mein prev swing high break → continuation
+  - **BOS Bear** (red #FF3B30): downtrend mein prev swing low break → continuation
+  - **CHoCH Bull** (cyan #00BFFF): downtrend mein high break → reversal signal
+  - **CHoCH Bear** (orange #FF6B00): uptrend mein low break → reversal signal
+  - Each event: horizontal broken-level line + label pill + directional arrow marker
 - `index.js`: fixed pre-existing `@/index.css` → `./index.css` CRA import regression
 
 ## P0/P1/P2 Backlog
