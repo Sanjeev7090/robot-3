@@ -178,6 +178,8 @@ const ChartPanel = ({
   const [isMovingMode, setIsMovingMode] = useState(false);
   const [tfOpen, setTfOpen] = useState(false);
   const tfDropdownRef = useRef(null);
+  const tfBtnRef = useRef(null);
+  const [tfDropdownPos, setTfDropdownPos] = useState({ top: 0, left: 0 });
   const [showTrade, setShowTrade] = useState(false);
   const [vpActive, setVpActive] = useState(false);
   const [vpTooltip, setVpTooltip] = useState(null);
@@ -920,14 +922,16 @@ const ChartPanel = ({
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  // TF dropdown: close on outside click
+  // TF dropdown: close on outside click (works on mobile touch too)
   useEffect(() => {
     const handler = (e) => {
-      if (tfDropdownRef.current && !tfDropdownRef.current.contains(e.target))
-        setTfOpen(false);
+      if (
+        !(tfBtnRef.current && tfBtnRef.current.contains(e.target)) &&
+        !(tfDropdownRef.current && tfDropdownRef.current.contains(e.target))
+      ) setTfOpen(false);
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
   }, []);
 
   useEffect(() => {
@@ -955,9 +959,18 @@ const ChartPanel = ({
       <div className="flex items-center justify-between px-2 py-1 border-b border-slate-200 dark:border-white/10 bg-white dark:bg-[#0A0A0A] shrink-0 gap-1 overflow-x-auto scrollbar-none transition-colors duration-200">
         <div className="flex items-center gap-1 flex-nowrap shrink-0">
           {/* TF Selector — TradingView style grouped dropdown */}
-          <div className="relative shrink-0" ref={tfDropdownRef}>
+          <div className="shrink-0">
             <button
-              onClick={() => setTfOpen(p => !p)}
+              ref={tfBtnRef}
+              onClick={() => {
+                if (!tfOpen && tfBtnRef.current) {
+                  const rect = tfBtnRef.current.getBoundingClientRect();
+                  const dropW = 170;
+                  const left = Math.min(rect.left, window.innerWidth - dropW - 8);
+                  setTfDropdownPos({ top: rect.bottom + 4, left: Math.max(8, left) });
+                }
+                setTfOpen(p => !p);
+              }}
               className={`px-2.5 py-1 text-[11px] font-mono font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all border shrink-0 ${
                 tfOpen
                   ? 'bg-slate-900 dark:bg-white/15 text-white border-white/30'
@@ -971,8 +984,17 @@ const ChartPanel = ({
 
             {tfOpen && (
               <div
-                className="absolute top-full left-0 mt-1 z-[300] bg-white dark:bg-[#1C1C1C] border border-slate-200 dark:border-white/10 shadow-2xl"
-                style={{ minWidth: 170, maxHeight: 420, overflowY: 'auto' }}
+                ref={tfDropdownRef}
+                className="bg-white dark:bg-[#1C1C1C] border border-slate-200 dark:border-white/10 shadow-2xl"
+                style={{
+                  position: 'fixed',
+                  top: tfDropdownPos.top,
+                  left: tfDropdownPos.left,
+                  zIndex: 9999,
+                  minWidth: 170,
+                  maxHeight: 420,
+                  overflowY: 'auto',
+                }}
               >
                 {TF_GROUPS.map(grp => (
                   <div key={grp.group}>
@@ -983,7 +1005,7 @@ const ChartPanel = ({
                       <button
                         key={tf.label}
                         onClick={() => { onTimeframeChange(tf); setTfOpen(false); }}
-                        className={`w-full text-left px-3 py-[5px] text-[13px] font-medium transition-colors ${
+                        className={`w-full text-left px-3 py-[7px] text-[13px] font-medium transition-colors ${
                           timeframe.label === tf.label
                             ? 'bg-blue-600 text-white'
                             : 'text-slate-700 dark:text-zinc-200 hover:bg-slate-100 dark:hover:bg-white/8'
